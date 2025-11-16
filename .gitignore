@@ -79,3 +79,6 @@ venv/
 
 # REST Client (VS Code extension) package type files
 *.http
+
+VS Code settings
+.vscode/
