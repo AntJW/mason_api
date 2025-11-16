@@ -1,21 +1,58 @@
-# Welcome to Cloud Functions for Firebase for Python!
-# To get started, simply uncomment the below code or create your own.
-# Deploy with `firebase deploy`
+# from firebase_functions import https_fn
+# from firebase_functions.options import set_global_options
+# from firebase_admin import initialize_app
 
-from firebase_functions import https_fn
-from firebase_functions.options import set_global_options
-from firebase_admin import initialize_app
-
-# For cost control, you can set the maximum number of containers that can be
-# running at the same time. This helps mitigate the impact of unexpected
-# traffic spikes by instead downgrading performance. This limit is a per-function
-# limit. You can override the limit for each function using the max_instances
-# parameter in the decorator, e.g. @https_fn.on_request(max_instances=5).
-set_global_options(max_instances=10)
+# # For cost control, you can set the maximum number of containers that can be
+# # running at the same time. This helps mitigate the impact of unexpected
+# # traffic spikes by instead downgrading performance. This limit is a per-function
+# # limit. You can override the limit for each function using the max_instances
+# # parameter in the decorator, e.g. @https_fn.on_request(max_instances=5).
+# set_global_options(max_instances=10)
 
 # initialize_app()
-#
-#
+
+
 # @https_fn.on_request()
 # def on_request_example(req: https_fn.Request) -> https_fn.Response:
 #     return https_fn.Response("Hello world!")
+
+
+
+
+from firebase_admin import initialize_app, firestore, auth
+from firebase_functions import https_fn, options
+from flask import Flask, request, jsonify
+# from auth_decorator import login_required, group_admin_login_required,\
+#     admin_login_required, login_or_anonymous_required, group_member_login_required
+import google.cloud.firestore
+from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter
+import os
+# from utility import generate_invite_code, generate_default_profile_image, upload_to_storage, update_option_selection_count,\
+#     enrich_members_data
+from logger import logger
+from datetime import datetime, UTC, timezone
+from google.cloud.firestore_v1.field_path import FieldPath
+from firebase_functions.params import PROJECT_ID
+
+
+
+storage_bucket = "demo-project-id.appspot.com" if PROJECT_ID.value == "demo-project-id"  else f"{PROJECT_ID.value}.firebasestorage.app"
+initialize_app(options={"storageBucket": storage_bucket})
+app = Flask(__name__)
+
+
+# Expose Flask app as a single Cloud Function:
+@https_fn.on_request(
+        cors=options.CorsOptions(
+        cors_origins=[origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",")],
+        cors_methods=["get", "post", "put", "delete"],
+    ),
+    secrets=[],
+    timeout_sec=120
+)
+def api(req: https_fn.Request) -> https_fn.Response:
+    with app.request_context(req.environ):
+        return app.full_dispatch_request()
+
+# Create all functions below this line ===========================================================================================
+
