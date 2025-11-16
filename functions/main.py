@@ -56,3 +56,10 @@ def api(req: https_fn.Request) -> https_fn.Response:
 
 # Create all functions below this line ===========================================================================================
 
+@app.get("/hello-world")
+def get_hello_world():
+    try:
+        return jsonify({"message": "Hello World"}), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500

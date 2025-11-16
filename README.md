@@ -14,7 +14,7 @@ Also `--project` has to be specified with an project id prepended with `demo` to
 Example test.http: 
 
 ```bash
-POST http://127.0.0.1:5001/demo-project-id/us-central1/api/hello-world
+GET http://127.0.0.1:5001/demo-project-id/us-central1/api/hello-world
 content-type: application/json
 
 {}
