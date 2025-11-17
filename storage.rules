@@ -6,7 +6,10 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     match /{allPaths=**} {
-      allow read, write: if false;
+      allow read, write: if request.auth != null;
     }
   }
 }
+
+// TODO: Update security rules for buckets once before deploying to production. 
+// Current rules are good for testing purposes, but not for production. 
