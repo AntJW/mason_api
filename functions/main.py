@@ -35,9 +35,7 @@ from google.cloud.firestore_v1.field_path import FieldPath
 from firebase_functions.params import PROJECT_ID
 
 
-
-storage_bucket = "demo-project-id.appspot.com" if PROJECT_ID.value == "demo-project-id"  else f"{PROJECT_ID.value}.firebasestorage.app"
-initialize_app(options={"storageBucket": storage_bucket})
+initialize_app(options={"storageBucket": f"{PROJECT_ID.value}.firebasestorage.app"})
 app = Flask(__name__)
 
 
