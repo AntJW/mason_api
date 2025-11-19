@@ -12,7 +12,7 @@ Note: Use `.env.local` and `.secret.local` to define environment variables and s
 Example test.http: 
 
 ```bash
-GET http://127.0.0.1:5001/demo-project-id/us-central1/api/hello-world
+GET http://127.0.0.1:5001/mason-b4c0a/us-central1/api/hello-world
 content-type: application/json
 
 {}
