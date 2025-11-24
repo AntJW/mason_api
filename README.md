@@ -18,19 +18,105 @@ content-type: application/json
 {}
 ```
 
-## AI Service & Deployment
+## Services
+
+### Ollama API
 
 The in app AI chat assistent utilizes an open source model served via [Ollama](https://ollama.com/). The model is deployed to Cloud Run, and accessible from the app via a simple URL. The service configuration is located in [deployment/ollama-cf.Dockerfile](./deployment/ollama-cf.Dockerfile). 
 
-Build Docker container first:
-```bash
-PROJECT_ID=mason-b4c0a
-REPOSITORY=antjw-mason_api
+Reference Guide: [GPU support for services](https://cloud.google.com/run/docs/configuring/services/gpu).
 
-gcloud builds submit --tag us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/ollama-cr --machine-type e2-highcpu-32 --project $PROJECT_ID
+
+```bash
+# Build Docker container first
+
+PROJECT_ID=mason-b4c0a
+REPOSITORY=docker-repo
+SERVICE_NAME=ollama-api
+IMAGE_URL=us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE_NAME
+
+cd services/$SERVICE_NAME
+
+gcloud builds submit --tag $IMAGE_URL --machine-type e2-highcpu-32 --project $PROJECT_ID
+
+# Deploy to Cloud Run
+
+gcloud run deploy $SERVICE_NAME \
+    --image $IMAGE_URL \
+    -- project $PROJECT_ID \
+    --region us-central1 \
+    --gpu 1 \
+    --gpu-type nvidia-l4 \
+    --no-gpu-zonal-redundancy \
+    --concurrency 1 \
+    --cpu 8 \
+    --set-env-vars OLLAMA_NUM_PARALLEL=1 \
+    --max-instances 3 \
+    --memory 32Gi \
+    --no-cpu-throttling \
+    --allow-unauthenticated \
+    --port 11434 \
+    --timeout=600
+
+# TODO: Remove --allow-unauthenticated once auth is updated and ready for production. 
+```
+```bash
+# Example requests
+
+CR_SERVICE_URL=https://ollama-cr-806142703984.us-central1.run.app
+
+curl $CR_SERVICE_URL/api/generate \
+  -d '{
+    "model": "gemma3:4b",
+    "prompt": "Why is the sky blue?"
+  }'
+
+
+curl $CR_SERVICE_URL/api/chat \
+  -d '{
+    "model": "gemma3:4b",
+    "messages": [{
+      "role": "user",
+      "content": "Why is the sky blue?"
+    }],
+    "stream": true
+  }'
 ```
 
-Deploy to Cloud Run
+### Transcribe API
+
 ```bash
-gcloud 
+# Build Docker container first
+
+export PROJECT_ID=mason-b4c0a &&
+export REPOSITORY=docker-repo &&
+export SERVICE_NAME=transcribe-api &&
+export IMAGE_URL=us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE_NAME
+
+cd services/$SERVICE_NAME
+
+gcloud builds submit --tag $IMAGE_URL --machine-type e2-highcpu-32 --project $PROJECT_ID
+
+gcloud run deploy $SERVICE_NAME \
+    --image $IMAGE_URL \
+    --project $PROJECT_ID \
+    --region us-central1 \
+    --gpu 1 \
+    --gpu-type nvidia-l4 \
+    --no-gpu-zonal-redundancy \
+    --concurrency 1 \
+    --cpu 8 \
+    --set-env-vars OLLAMA_NUM_PARALLEL=1 \
+    --max-instances 3 \
+    --memory 32Gi \
+    --no-cpu-throttling \
+    --allow-unauthenticated \
+    --port 8080 \
+    --timeout=600
+```
+
+```bash
+curl -X POST \
+  -F "file=@//Users/anthonywhite/Downloads/interview-hazel.m4a" \
+  https://api.example.com/transcribe
 ```
