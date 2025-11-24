@@ -28,19 +28,34 @@ Reference Guide: [GPU support for services](https://cloud.google.com/run/docs/co
 
 
 ```bash
+# Prerequisites
+
+# Install docker locally
+
+# Navigate to https://www.docker.com/ and download Docker Desktop 
+
+# Configures Docker to use the Google Cloud CLI as a credential helper for authenticating with Artifact Registry
+gcloud auth configure-docker us-central1-docker.pkg.dev
+```
+
+
+```bash
 # Build Docker container first
 
-PROJECT_ID=mason-b4c0a
-REPOSITORY=docker-repo
-SERVICE_NAME=ollama-api
-IMAGE_URL=us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE_NAME
+export PROJECT_ID=mason-b4c0a &&
+export REPOSITORY=docker-repo &&
+export SERVICE_NAME=ollama-api &&
+export IMAGE_URL=us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE_NAME
 
 cd services/$SERVICE_NAME
 
-gcloud builds submit --tag $IMAGE_URL --machine-type e2-highcpu-32 --project $PROJECT_ID
+# Build docker image locally before pusing it to Artifact Repository. Greatly reduces Cloud Build cost (associated with $gcloud build submit).
+
+docker build --platform=linux/amd64 -t $IMAGE_URL .
+
+docker push $IMAGE_URL
 
 # Deploy to Cloud Run
-
 gcloud run deploy $SERVICE_NAME \
     --image $IMAGE_URL \
     -- project $PROJECT_ID \
@@ -49,10 +64,10 @@ gcloud run deploy $SERVICE_NAME \
     --gpu-type nvidia-l4 \
     --no-gpu-zonal-redundancy \
     --concurrency 1 \
-    --cpu 8 \
+    --cpu 4 \
     --set-env-vars OLLAMA_NUM_PARALLEL=1 \
     --max-instances 3 \
-    --memory 32Gi \
+    --memory 16Gi \
     --no-cpu-throttling \
     --allow-unauthenticated \
     --port 11434 \
@@ -61,7 +76,7 @@ gcloud run deploy $SERVICE_NAME \
 # TODO: Remove --allow-unauthenticated once auth is updated and ready for production. 
 ```
 ```bash
-# Example requests
+# Example requests for Ollama API / LLM models
 
 CR_SERVICE_URL=https://ollama-cr-806142703984.us-central1.run.app
 
@@ -95,8 +110,13 @@ export IMAGE_URL=us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE_NAM
 
 cd services/$SERVICE_NAME
 
-gcloud builds submit --tag $IMAGE_URL --machine-type e2-highcpu-32 --project $PROJECT_ID
+# Build docker image locally before pushing it to Artifact Repository. Greatly reduces Cloud Build cost (associated with $gcloud build submit).
 
+docker build --platform=linux/amd64 -t $IMAGE_URL .
+
+docker push $IMAGE_URL
+
+# Deploy to Cloud Run
 gcloud run deploy $SERVICE_NAME \
     --image $IMAGE_URL \
     --project $PROJECT_ID \
@@ -105,10 +125,10 @@ gcloud run deploy $SERVICE_NAME \
     --gpu-type nvidia-l4 \
     --no-gpu-zonal-redundancy \
     --concurrency 1 \
-    --cpu 8 \
+    --cpu 4 \
     --set-env-vars OLLAMA_NUM_PARALLEL=1 \
     --max-instances 3 \
-    --memory 32Gi \
+    --memory 16Gi \
     --no-cpu-throttling \
     --allow-unauthenticated \
     --port 8080 \
@@ -117,12 +137,12 @@ gcloud run deploy $SERVICE_NAME \
 ```
 
 ```bash
-# Example requests
+# Example requests for transcribe API
 
 export CR_SERVICE_URL=https://transcribe-api-806142703984.us-central1.run.app
 
-curl -X GET \                          
-  $CR_SERVICE_URL/health
+curl -X GET \
+    $CR_SERVICE_URL/health
 
 curl -X POST \
   -F "file=@//Users/anthonywhite/Downloads/interview-hazel.m4a" \
