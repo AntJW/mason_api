@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+openai-whisper
+torch  # with CUDA for GPU
+pyannote.audio
+soundfile

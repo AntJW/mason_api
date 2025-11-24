@@ -20,7 +20,7 @@ ENV OLLAMA_MODELS /models
 # Reduce log verbosity.
 ENV OLLAMA_DEBUG false
 
-ENV MODEL gpt-oss:20b
+ENV MODEL gemma3:4b
 
 # Expose port for the service
 EXPOSE 11434
