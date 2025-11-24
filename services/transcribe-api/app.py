@@ -2,6 +2,7 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import asyncio
 import whisper
 from pyannote.audio import Pipeline
 import tempfile
@@ -12,27 +13,41 @@ import os
 # Global variables for models
 whisper_model = None
 pyannote_pipeline = None
+models_loading = False
+models_loaded = False
+
+
+async def load_models_background():
+    """Load models in the background after server starts"""
+    global whisper_model, pyannote_pipeline, models_loading, models_loaded
+    models_loading = True
+    try:
+        print("Loading Whisper model...")
+        whisper_model = whisper.load_model(
+            "turbo", device="cuda")  # GPU by default
+
+        print("Loading PyAnnote pipeline...")
+        # Use HuggingFace API token or local model
+        pyannote_pipeline = Pipeline.from_pretrained(
+            "pyannote/speaker-diarization-community-1", token=os.getenv("HUGGINGFACE_TOKEN"))
+
+        # send pipeline to GPU (when available)
+        pyannote_pipeline.to(torch.device("cuda"))
+        print("Models loaded successfully!")
+        models_loaded = True
+    except Exception as e:
+        print(f"Error loading models: {e}")
+    finally:
+        models_loading = False
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown"""
-    # Startup
-    global whisper_model, pyannote_pipeline
-    print("Loading Whisper model...")
-    whisper_model = whisper.load_model(
-        "turbo", device="cuda")  # GPU by default
+    # Start server immediately, load models in background
+    asyncio.create_task(load_models_background())
 
-    print("Loading PyAnnote pipeline...")
-    # Use HuggingFace API token or local model
-    pyannote_pipeline = Pipeline.from_pretrained(
-        "pyannote/speaker-diarization-3.1", token=os.getenv("HUGGINGFACE_TOKEN"))
-
-    # send pipeline to GPU (when available)
-    pyannote_pipeline.to(torch.device("cuda"))
-    print("Models loaded successfully!")
-
-    yield  # App runs here
+    yield  # App runs here (server starts listening immediately)
 
     # Shutdown (optional cleanup code can go here)
     print("Shutting down...")
@@ -54,14 +69,17 @@ async def health_check():
     """Health check endpoint for Cloud Run"""
     return {
         "status": "healthy",
-        "models_loaded": whisper_model is not None and pyannote_pipeline is not None
+        "models_loaded": models_loaded,
+        "models_loading": models_loading
     }
 
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile):
-    if whisper_model is None or pyannote_pipeline is None:
-        return {"error": "Models are still loading"}, 503
+    if not models_loaded:
+        if models_loading:
+            return {"error": "Models are still loading, please try again in a moment"}, 503
+        return {"error": "Models failed to load"}, 500
 
     # Save uploaded file temporarily
     with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as tmp:
@@ -70,12 +88,12 @@ async def transcribe_audio(file: UploadFile):
 
     # 1. Whisper transcription
     transcription_result = whisper_model.transcribe(audio_path, fp16=True)
-    transcript_text = transcription_result['text']
 
     # 2. PyAnnote speaker diarization
     diarization = pyannote_pipeline(audio_path)
     speaker_segments = []
-    for turn, _, speaker in diarization.itertracks(yield_label=True):
+    # Access annotation attribute for newer pyannote.audio API
+    for turn, speaker in diarization.speaker_diarization:
         speaker_segments.append({
             "start": turn.start,
             "end": turn.end,
@@ -84,7 +102,7 @@ async def transcribe_audio(file: UploadFile):
 
     # Combine results
     result = {
-        "transcript": transcript_text,
+        "transcript": transcription_result,
         "speakers": speaker_segments
     }
 

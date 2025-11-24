@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 openai-whisper
-torch  # with CUDA for GPU
+torch
 pyannote.audio
 soundfile
+python-multipart

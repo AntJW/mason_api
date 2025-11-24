@@ -1,11 +1,18 @@
 FROM nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04
 
-# Install system deps
+# Install system deps including FFmpeg and all required libraries
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-venv \
     python3-pip \
-    ffmpeg git curl wget
+    ffmpeg \
+    libavcodec-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswresample-dev \
+    libswscale-dev \
+    git curl wget \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set workdir
 WORKDIR /app
@@ -25,4 +32,4 @@ RUN pip install -r requirements.txt
 EXPOSE 8080
 
 # Run FastAPI - use PORT env var with 8080 as fallback
-CMD uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080}
+CMD python3 -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080}

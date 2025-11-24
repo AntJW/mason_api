@@ -112,11 +112,14 @@ gcloud run deploy $SERVICE_NAME \
     --no-cpu-throttling \
     --allow-unauthenticated \
     --port 8080 \
-    --timeout=600
+    --timeout=600 \
+    --set-env-vars HUGGINGFACE_TOKEN={SECRET}
 ```
 
 ```bash
+export CR_SERVICE_URL=https://transcribe-api-806142703984.us-central1.run.app
+
 curl -X POST \
   -F "file=@//Users/anthonywhite/Downloads/interview-hazel.m4a" \
-  https://api.example.com/transcribe
+  $CR_SERVICE_URL/transcribe
 ```
