@@ -117,7 +117,12 @@ gcloud run deploy $SERVICE_NAME \
 ```
 
 ```bash
+# Example requests
+
 export CR_SERVICE_URL=https://transcribe-api-806142703984.us-central1.run.app
+
+curl -X GET \                          
+  $CR_SERVICE_URL/health
 
 curl -X POST \
   -F "file=@//Users/anthonywhite/Downloads/interview-hazel.m4a" \
