@@ -230,7 +230,7 @@ def create_conversation():
         })
 
         updated_conversation_doc = firestore_client.collection(
-            "conversations").document(conversation_id).get()
+            "conversations").document(conversation_id).get(field_paths=["customerId", "audioStoragePath", "createdAt", "duration", "header", "summaryMarkdown", "mergedSegments", "language", "status"])
 
         delete_tmp_file(local_tmp_file_path)
         return jsonify(updated_conversation_doc.to_dict()), 200
