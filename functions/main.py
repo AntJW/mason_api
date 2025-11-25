@@ -118,13 +118,14 @@ def create_customer():
 
 
 @app.post("/conversation/create")
-# @login_required
+@login_required
 def create_conversation():
     try:
-        # user = request.user
-        # user_uid = user.get("uid")
+        user = request.user
+        user_uid = user.get("uid")
         request_form = request.form
         customer_id = request_form.get("customerId")
+        duration = request_form.get("duration")
 
         # Receive audio file from request (multipart/form-data)
         if "file" not in request.files:
@@ -155,7 +156,7 @@ def create_conversation():
             "customerId": customer_id,
             "audioStoragePath": storage_file_path,
             "createdAt": SERVER_TIMESTAMP,
-            "duration": 123,  # TODO: Calculate duration of audio file, or get it from client
+            "duration": duration,  # TODO: Calculate duration of audio file, or get it from client
             "header": None,
             "summary": None,  # raw summary text
             "summaryMarkdown": None,  # summary text in markdown format
