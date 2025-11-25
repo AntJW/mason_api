@@ -5,6 +5,7 @@ import librosa
 import os
 import tempfile
 from firebase_admin import storage
+import soundfile
 
 
 def is_valid_email(email: str) -> bool:
@@ -43,9 +44,14 @@ def convert_audio_sample_rate(file_path, sample_rate: int = 16000):
         # librosa automatically resamples during load
         wav_file, sr = librosa.load(file_path, sr=sample_rate)
 
-        return wav_file
+        wav_bytes_io = io.BytesIO()
+        soundfile.write(wav_bytes_io, wav_file.T if wav_file.ndim >
+                        1 else wav_file, sr, format="WAV")
+        wav_bytes_io.seek(0)  # rewind to the start
+
+        return wav_bytes_io
     except Exception as e:
-        pass
+        raise e
 
 
 def upload_to_storage(local_tmp_file_path, storage_file_path, make_public: bool = False):

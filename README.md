@@ -58,7 +58,7 @@ docker push $IMAGE_URL
 # Deploy to Cloud Run
 gcloud run deploy $SERVICE_NAME \
     --image $IMAGE_URL \
-    -- project $PROJECT_ID \
+    --project $PROJECT_ID \
     --region us-central1 \
     --gpu 1 \
     --gpu-type nvidia-l4 \
