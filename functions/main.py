@@ -18,8 +18,10 @@ from logger import logger
 from datetime import datetime, UTC, timezone
 from google.cloud.firestore_v1.field_path import FieldPath
 from firebase_functions.params import PROJECT_ID
-from utility import is_valid_email
+from utility import is_valid_email, convert_audio_sample_rate, create_tmp_file, upload_to_storage, delete_tmp_file
 from enum import Enum
+import uuid
+import requests
 
 
 initialize_app(
@@ -108,6 +110,80 @@ def create_customer():
 
         customer_json["id"] = customer_id
         return jsonify(customer_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/conversation/create")
+# @login_required
+def create_conversation():
+    try:
+        # user = request.user
+        # user_uid = user.get("uid")
+        request_form = request.form
+        customer_id = request_form.get("customerId")
+
+        # Receive audio file from request (multipart/form-data)
+        if "audio" not in request.files:
+            return jsonify({"error": "No audio file provided"}), 400
+        audio_file = request.files["audio"]
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+
+        # ✅ Upload audio file to storage
+        # ✅ Create conversation document in Firestore
+        # ✅ Convert audio file to be 16,000 Hz. Needed for pyAnnote speaker diarization.
+        # Send audio file to transcribe API
+        # Save raw transcription text to Firestore
+        # Save whisper start and end timestamps to Firestore
+        # Save pyannote speaker diarization start and end timestamps to Firestore
+        # Overlap whisper and pyannote timestamps to get the start and end of each speaker's turn
+        # Send transcription text to Ollama/LLM api for summary, action items, and header
+        # Update conversation summary, action items, and header in Firestore
+
+        local_tmp_file_path = create_tmp_file(audio_file)
+
+        storage_file_path = f"audio/customers/{customer_id}/{uuid.uuid4()}.m4a"
+        upload_to_storage(local_tmp_file_path, storage_file_path)
+
+        conversation_doc_ref = firestore_client.collection(
+            "conversations").document()
+        conversation_id = conversation_doc_ref.id
+
+        conversation_json = {
+            "customerId": customer_id,
+            "audioStoragePath": storage_file_path,
+            "createdAt": SERVER_TIMESTAMP,
+            "duration": 123,  # TODO: Calculate duration of audio file, or get it from client
+            "header": None,
+            "summary": None,  # raw summary text
+            "summaryFormatted": None,  # formatted summary text
+            "transcript": None,  # raw transcript text
+            # list of transcript segments (start, end, text)
+            "transcriptSegments": None,
+            # list of speaker segments (start, end, speaker)
+            "speakerSegments": None,
+            # merged  transcript and speaker segments (start, end, text, speaker)
+            "mergedSegments": None
+        }
+
+        conversation_doc_ref.set(conversation_json)
+
+        transcribe_api_url = f"{os.getenv("TRANSCRIBE_API_URL")}/transcribe"
+        transcribe_api_response = requests.post(
+            transcribe_api_url, files={"file": audio_file})
+        transcribe_api_response.raise_for_status()
+        transcribe_api_data = transcribe_api_response.json()
+
+        print("================================================",
+              transcribe_api_data)
+
+        wav_file = convert_audio_sample_rate(local_tmp_file_path)
+
+        delete_tmp_file(local_tmp_file_path)
+
+        return jsonify({"message": "Audio file received", "filename": audio_file.filename}), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500

@@ -76,34 +76,32 @@ async def health_check():
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile):
-    if not models_loaded:
-        if models_loading:
-            return {"error": "Models are still loading, please try again in a moment"}, 503
-        return {"error": "Models failed to load"}, 500
+    try:
+        # Save uploaded file temporarily
+        with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as tmp:
+            tmp.write(await file.read())
+            audio_path = tmp.name
 
-    # Save uploaded file temporarily
-    with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as tmp:
-        tmp.write(await file.read())
-        audio_path = tmp.name
+        # 1. Whisper transcription
+        transcription_result = whisper_model.transcribe(audio_path, fp16=True)
 
-    # 1. Whisper transcription
-    transcription_result = whisper_model.transcribe(audio_path, fp16=True)
+        # 2. PyAnnote speaker diarization
+        diarization = pyannote_pipeline(audio_path)
+        speaker_segments = []
+        # Access annotation attribute for newer pyannote.audio API
+        for turn, speaker in diarization.speaker_diarization:
+            speaker_segments.append({
+                "start": turn.start,
+                "end": turn.end,
+                "speaker": speaker
+            })
 
-    # 2. PyAnnote speaker diarization
-    diarization = pyannote_pipeline(audio_path)
-    speaker_segments = []
-    # Access annotation attribute for newer pyannote.audio API
-    for turn, speaker in diarization.speaker_diarization:
-        speaker_segments.append({
-            "start": turn.start,
-            "end": turn.end,
-            "speaker": speaker
-        })
+        # Combine results
+        result = {
+            "transcript": transcription_result,
+            "speakers": speaker_segments
+        }
 
-    # Combine results
-    result = {
-        "transcript": transcription_result,
-        "speakers": speaker_segments
-    }
-
-    return result
+        return result
+    except Exception as e:
+        return {"error": str(e)}, 500

@@ -1,4 +1,10 @@
 import re
+import io
+from werkzeug.datastructures import FileStorage
+import librosa
+import os
+import tempfile
+from firebase_admin import storage
 
 
 def is_valid_email(email: str) -> bool:
@@ -26,3 +32,42 @@ def min_length(value: str, min_length: int) -> bool:
     if len(value.strip()) < min_length:
         return False
     return True
+
+
+def convert_audio_sample_rate(file_path, sample_rate: int = 16000):
+    """
+    Convert audio file to specified sample rate using librosa.
+    Returns (audio_array, sample_rate) tuple.
+    """
+    try:
+        # librosa automatically resamples during load
+        wav_file, sr = librosa.load(file_path, sr=sample_rate)
+
+        return wav_file
+    except Exception as e:
+        pass
+
+
+def upload_to_storage(local_tmp_file_path, storage_file_path, make_public: bool = False):
+    try:
+        bucket = storage.bucket()
+        blob = bucket.blob(storage_file_path)
+        blob.upload_from_filename(local_tmp_file_path)
+
+        if make_public:
+            blob.make_public()
+
+        return blob
+    except Exception as e:
+        pass
+
+
+def create_tmp_file(file: FileStorage) -> str:
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        file.save(tmp.name)
+        tmp_path = tmp.name
+    return tmp_path
+
+
+def delete_tmp_file(tmp_path: str):
+    os.remove(tmp_path)
