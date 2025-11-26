@@ -230,11 +230,8 @@ def create_conversation():
             "status": "completed"
         })
 
-        updated_conversation_doc = firestore_client.collection(
-            "conversations").document(conversation_id).get(field_paths=["customerId", "audioStoragePath", "createdAt", "duration", "header", "summaryMarkdown", "mergedSegments", "language", "status"])
-
         delete_tmp_file(local_tmp_file_path)
-        return jsonify(updated_conversation_doc.to_dict()), 200
+        return jsonify({"id": conversation_id}), 200
     except Exception as e:
         conversation_doc_ref.delete()
         logger.error(f"error: {e}")
