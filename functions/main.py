@@ -83,6 +83,38 @@ def get_customer(customer_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.get("/customers")
+@login_required
+def get_customers():
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        customer_docs = firestore_client.collection(
+            "customers").where("userId", "==", user_uid).get()
+
+        customers_list = []
+        for customer_doc in customer_docs:
+            customer_json = customer_doc.to_dict()
+            customers_list.append({
+                "id": customer_doc.id,
+                "displayName": customer_json.get("displayName"),
+                "firstName": customer_json.get("firstName"),
+                "lastName": customer_json.get("lastName"),
+                "email": customer_json.get("email"),
+                "phone": customer_json.get("phone"),
+                "address": customer_json.get("address"),
+                "userId": customer_json.get("userId"),
+                "status": customer_json.get("status"),
+                "createdAt": customer_json.get("createdAt").isoformat()
+            })
+
+        return jsonify(customers_list), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.post("/customer/create")
 @login_required
 def create_customer():
