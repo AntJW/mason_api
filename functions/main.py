@@ -194,7 +194,7 @@ def create_conversation(customer_id):
         # merged transcript and speaker segments (start, end, text, speaker)
         merged_segments = []
         merged_segments_string = ""
-        for segment in conversation_json["transcriptSegments"]:
+        for segment in transcribe_api_data["transcript"]["segments"]:
             merged_segments.append({
                 "start": segment.get("start"),
                 "end": segment.get("end"),
@@ -217,7 +217,26 @@ def create_conversation(customer_id):
             f"{os.getenv('OLLAMA_API_URL')}/api/generate",
             json={
                 "model": "gemma3:4b",
-                "system": "You are a helpful assistant that summarizes conversations. You will be given a conversation and you will need to summarize it into a brief summary, and header. The header should be no more than 5 words. The summary should be no more than 100 words and include mosting bullet points of key information, and action items. Also output the summary in markdown format (summaryMarkdown field). Output must strictly follow the JSON schema.",
+                "system": (
+                    "You are a summarization assistant. You will receive a full conversation transcript "
+                    "and must return: (1) a concise header, and (2) a brief summary.\n\n"
+
+                    "HEADER:\n"
+                    "- No more than 5 words.\n"
+
+                    "SUMMARY:\n"
+                    "- No more than 100 words.\n"
+                    "- Include bullet points for key insights and action items.\n"
+                    "- Must NOT repeat the header.\n\n"
+
+                    "MARKDOWN SUMMARY (summaryMarkdown):\n"
+                    "- Output the same content as `summary`, but in Markdown format.\n"
+                    "- Use **bold** for section labels instead of Markdown headers and ensure spacing between sections.\n"
+                    "- Do NOT include any content outside the JSON schema.\n\n"
+
+                    "Your entire output MUST strictly follow the JSON schema. "
+                    "Do not output anything other than valid JSON."
+                ),
                 "prompt": merged_segments_string,
                 "stream": False,
                 "format": {
@@ -231,6 +250,7 @@ def create_conversation(customer_id):
                 }
             }
         )
+
         ollama_api_response_json = json.loads(
             ollama_api_response.json()["response"])
 
@@ -242,39 +262,6 @@ def create_conversation(customer_id):
             "summary": ollama_api_response_json["summaryMarkdown"],
             "status": "completed"
         })
-
-        # test_transcript = [
-        #     {
-        #         "start": 0,
-        #         "end": 1,
-        #         "text": "Hello, how are you?",
-        #         "speaker": "Speaker 1"
-        #     },
-        #     {
-        #         "start": 1,
-        #         "end": 2,
-        #         "text": "I am fine, thank you.",
-        #         "speaker": "Speaker 2"
-        #     },
-        #     {
-        #         "start": 2,
-        #         "end": 3,
-        #         "text": "What is your name?",
-        #         "speaker": "Speaker 1"
-        #     },
-        #     {
-        #         "start": 3,
-        #         "end": 4,
-        #         "text": "My name is John Doe.",
-        #         "speaker": "Speaker 2"
-        #     }
-        # ]
-
-        # conversation_doc_ref.update({
-        #     "header": "test header",
-        #     "summary": "summary text",
-        #     "transcript": test_transcript
-        # })
 
         delete_tmp_file(local_tmp_file_path)
         return jsonify({"id": conversation_id}), 200
