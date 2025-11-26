@@ -24,7 +24,7 @@ import uuid
 import requests
 import io
 import json
-
+import time
 
 initialize_app(
     options={"storageBucket": f"{PROJECT_ID.value}.firebasestorage.app"})
@@ -117,15 +117,14 @@ def create_customer():
         return jsonify({"error": str(e)}), 500
 
 
-@app.post("/conversation/create")
+@app.post("/customers/<customer_id>/conversations/create")
 @login_required
-def create_conversation():
+def create_conversation(customer_id):
     try:
         user = request.user
         user_uid = user.get("uid")
         request_form = request.form
-        customer_id = request_form.get("customerId")
-        duration = request_form.get("duration")
+        duration = int(request_form.get("duration"))
 
         # Receive audio file from request (multipart/form-data)
         if "file" not in request.files:
@@ -156,18 +155,7 @@ def create_conversation():
             "customerId": customer_id,
             "audioStoragePath": storage_file_path,
             "createdAt": SERVER_TIMESTAMP,
-            "duration": duration,  # TODO: Calculate duration of audio file, or get it from client
-            "header": None,
-            "summary": None,  # raw summary text
-            "summaryMarkdown": None,  # summary text in markdown format
-            "transcript": None,  # raw transcript text
-            # list of transcript segments (start, end, text)
-            "transcriptSegments": None,
-            # list of speaker segments (start, end, speaker)
-            "speakerSegments": None,
-            # merged  transcript and speaker segments (start, end, text, speaker)
-            "mergedSegments": None,
-            "language": None,
+            "duration": duration,
             "status": "processing"
         }
 
@@ -178,62 +166,91 @@ def create_conversation():
 
         audio_file.stream.seek(0)
 
-        transcribe_api_url = f"{os.getenv('TRANSCRIBE_API_URL')}/transcribe"
-        transcribe_api_response = requests.post(
-            transcribe_api_url, files={"file": ("audio.wav", wav_bytes_io, "audio/wav")})
-        transcribe_api_response.raise_for_status()
-        transcribe_api_data = transcribe_api_response.json()
+        # transcribe_api_url = f"{os.getenv('TRANSCRIBE_API_URL')}/transcribe"
+        # transcribe_api_response = requests.post(
+        #     transcribe_api_url, files={"file": ("audio.wav", wav_bytes_io, "audio/wav")})
+        # transcribe_api_response.raise_for_status()
+        # transcribe_api_data = transcribe_api_response.json()
+
+        # # merged transcript and speaker segments (start, end, text, speaker)
+        # merged_segments = []
+        # merged_segments_string = ""
+        # for segment in conversation_json["transcriptSegments"]:
+        #     merged_segments.append({
+        #         "start": segment.get("start"),
+        #         "end": segment.get("end"),
+        #         "text": segment.get("text"),
+        #         "speaker": "Speaker 1"
+        #     })
+        #     merged_segments_string += f"{segment.get('speaker')}: {segment.get('text')}\n"
+
+        # conversation_doc_ref.update({
+        #     "transcriptText": transcribe_api_data["transcript"]["text"],
+        #     # list of transcript segments (start, end, text)
+        #     "transcriptSegments": transcribe_api_data["transcript"]["segments"],
+        #     # list of speaker segments (start, end, speaker)
+        #     "speakerSegments": transcribe_api_data["speakers"],
+        #     "transcript": merged_segments,
+        #     "language": transcribe_api_data["transcript"]["language"]
+        # })
+
+        # ollama_api_response = requests.post(
+        #     f"{os.getenv('OLLAMA_API_URL')}/api/generate",
+        #     json={
+        #         "model": "gemma3:4b",
+        #         "system": "You are a helpful assistant that summarizes conversations. You will be given a conversation and you will need to summarize it into a brief summary, and header. The header should be no more than 5 words. The summary should be no more than 100 words and include mosting bullet points of key information, and action items. Also output the summary in markdown format (summaryMarkdown field). Output must strictly follow the JSON schema.",
+        #         "prompt": merged_segments_string,
+        #         "stream": False,
+        #         "format": {
+        #             "type": "object",
+        #             "properties": {
+        #                 "header": {"type": "string"},
+        #                 "summary": {"type": "string"},
+        #                 "summaryMarkdown": {"type": "string"}
+        #             },
+        #             "required": ["header", "summary", "summaryMarkdown"]
+        #         }
+        #     }
+        # )
+        # ollama_api_response_json = json.loads(
+        #     ollama_api_response.json()["response"])
+
+        # conversation_doc_ref.update({
+        #     "header": ollama_api_response_json["header"],
+        #     # raw summary text
+        #     "summaryText": ollama_api_response_json["summary"],
+        #     # summary text in markdown format
+        #     "summary": ollama_api_response_json["summaryMarkdown"],
+        #     "status": "completed"
+        # })
 
         conversation_doc_ref.update({
-            "transcript": transcribe_api_data["transcript"]["text"],
-            "transcriptSegments": transcribe_api_data["transcript"]["segments"],
-            "speakerSegments": transcribe_api_data["speakers"],
-            "language": transcribe_api_data["transcript"]["language"]
-        })
-
-        merged_segments = []
-        merged_segments_string = ""
-        for segment in conversation_json["transcriptSegments"]:
-            merged_segments.append({
-                "start": segment.get("start"),
-                "end": segment.get("end"),
-                "text": segment.get("text"),
-                "speaker": "Speaker 1"
-            })
-            merged_segments_string += f"{segment.get('speaker')}: {segment.get('text')}\n"
-
-        ollama_api_response = requests.post(
-            f"{os.getenv('OLLAMA_API_URL')}/api/generate",
-            json={
-                "model": "gemma3:4b",
-                "system": "You are a helpful assistant that summarizes conversations. You will be given a conversation and you will need to summarize it into a brief summary, and header. The header should be no more than 5 words. The summary should be no more than 100 words and include mosting bullet points of key information, and action items. Also output the summary in markdown format (summaryMarkdown field). Output must strictly follow the JSON schema.",
-                "prompt": merged_segments_string,
-                "stream": False,
-                "format": {
-                    "type": "object",
-                    "properties": {
-                        "header": {"type": "string"},
-                        "summary": {"type": "string"},
-                        "summaryMarkdown": {"type": "string"}
-                    },
-                    "required": ["header", "summary", "summaryMarkdown"]
-                }
-            }
-        )
-        ollama_api_response_json = json.loads(
-            ollama_api_response.json()["response"])
-
-        conversation_doc_ref.update({
-            "header": ollama_api_response_json["header"],
-            "summary": ollama_api_response_json["summary"],
-            "summaryMarkdown": ollama_api_response_json["summaryMarkdown"],
-            "status": "completed"
+            "header": "test header",
+            "summary": "summary text",
+            "transcript": "transcript text"
         })
 
         delete_tmp_file(local_tmp_file_path)
         return jsonify({"id": conversation_id}), 200
     except Exception as e:
         conversation_doc_ref.delete()
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/customers/<customer_id>/conversations/<conversation_id>")
+@login_required
+def get_conversation(customer_id, conversation_id):
+    try:
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        conversation_doc_ref = firestore_client.collection(
+            "conversations").document(conversation_id)
+        conversation_doc = conversation_doc_ref.get(field_paths=[
+                                                    "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript"])
+        conversation_json = conversation_doc.to_dict()
+        conversation_json["id"] = conversation_doc_ref.id
+        return jsonify(conversation_json), 200
+    except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
 
