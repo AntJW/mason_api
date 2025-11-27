@@ -162,7 +162,7 @@ def create_customer():
         customer_json["createdAt"] = customer_created_at_value.isoformat()
 
         customer_json["id"] = customer_id
-        return jsonify(customer_json), 200
+        return jsonify(customer_json), 201
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -183,15 +183,6 @@ def create_conversation(customer_id):
         audio_file = request.files["file"]
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
-
-        # ✅ Upload audio file to storage
-        # ✅ Create conversation document in Firestore
-        # ✅ Convert audio file to be 16,000 Hz. Needed for pyAnnote speaker diarization.
-        # ✅ Send audio file to transcribe API
-        # ✅ Save raw transcription (whisper) and speaker segments (pyannote) text to Firestore
-        # ❌ Overlap whisper and pyannote timestamps to get the start and end of each speaker's turn
-        # ✅ Send transcription text to Ollama/LLM api for summary, action items, and header
-        # ✅ Update conversation summary, action items, and header in Firestore
 
         local_tmp_file_path = create_tmp_file(audio_file)
 
@@ -222,6 +213,8 @@ def create_conversation(customer_id):
             transcribe_api_url, files={"file": ("audio.wav", wav_bytes_io, "audio/wav")})
         transcribe_api_response.raise_for_status()
         transcribe_api_data = transcribe_api_response.json()
+
+        # TODO: Overlap whisper and pyannote timestamps to get the start and end of each speaker's turn
 
         # merged transcript and speaker segments (start, end, text, speaker)
         merged_segments = []
@@ -295,8 +288,15 @@ def create_conversation(customer_id):
             "status": "completed"
         })
 
+        response_doc = conversation_doc_ref.get(field_paths=[
+                                                "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript"])
+        response_dict = response_doc.to_dict()
+        response_dict["createdAt"] = response_doc.get(
+            "createdAt").isoformat()
+        response_dict["id"] = conversation_id
+
         delete_tmp_file(local_tmp_file_path)
-        return jsonify({"id": conversation_id}), 200
+        return jsonify(response_dict), 201
     except Exception as e:
         conversation_doc_ref.delete()
         logger.error(f"error: {e}")
