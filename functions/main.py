@@ -332,11 +332,17 @@ def ai_chat(customer_id):
         ollama_client = ollama.Client(os.getenv('OLLAMA_API_URL'))
 
         def generate():
+            first_chunk = True  # Track the first piece of content
+
             for part in ollama_client.chat(model='gemma3:4b', messages=messages, stream=True):
                 content = part.get('message', {}).get('content', '')
                 if content:
-                    # Format as Server-Sent Events (SSE)
-                    yield f"data: {content}\n\n"
+                    if first_chunk:
+                        # Remove only leading newlines in the first chunk
+                        content = content.lstrip('\n')
+                        first_chunk = False
+                # Format as Server-Sent Events (SSE)
+                yield f"{content}"
 
         return Response(stream_with_context(generate()), mimetype='text/event-stream')
     except Exception as e:
