@@ -21,7 +21,6 @@ from enum import Enum
 import uuid
 import requests
 import json
-import ollama
 
 initialize_app(
     options={"storageBucket": f"{PROJECT_ID.value}.firebasestorage.app"})
@@ -324,25 +323,43 @@ def get_conversation(customer_id, conversation_id):
 def ai_chat(customer_id):
     try:
         request_data = request.get_json()
-        request_message = request_data.get("message")
-        role = "assistant"
+        # [{"role": "", "content": ""}]
+        messages = request_data.get("messages")
 
-        messages = [{"role": role, "content": request_message}]
-
-        ollama_client = ollama.Client(os.getenv('OLLAMA_API_URL'))
+        ollama_api_url = os.getenv('OLLAMA_API_URL')
 
         def generate():
             first_chunk = True  # Track the first piece of content
 
-            for part in ollama_client.chat(model='gemma3:4b', messages=messages, stream=True):
-                content = part.get('message', {}).get('content', '')
-                if content:
-                    if first_chunk:
-                        # Remove only leading newlines in the first chunk
-                        content = content.lstrip('\n')
-                        first_chunk = False
-                # Format as Server-Sent Events (SSE)
-                yield f"{content}"
+            # Make streaming request to Ollama API
+            response = requests.post(
+                f"{ollama_api_url}/api/chat",
+                json={
+                    "model": "gemma3:4b",
+                    "messages": messages,
+                    "stream": True
+                },
+                stream=True
+            )
+            response.raise_for_status()
+
+            # Parse streaming JSON response (each line is a JSON object)
+            for line in response.iter_lines():
+                if line:
+                    try:
+                        part = json.loads(line)
+                        message = part.get('message', {})
+                        content = message.get('content', '')
+                        if content:
+                            if first_chunk:
+                                # Remove only leading newlines in the first chunk
+                                message["content"] = content.lstrip('\n')
+                            first_chunk = False
+                            # Format as Server-Sent Events (SSE)
+                            yield f"{json.dumps(message)}"
+                    except json.JSONDecodeError:
+                        # Skip invalid JSON lines
+                        continue
 
         return Response(stream_with_context(generate()), mimetype='text/event-stream')
     except Exception as e:
