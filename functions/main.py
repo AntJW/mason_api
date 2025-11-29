@@ -7,13 +7,11 @@
 
 from firebase_admin import initialize_app, firestore, auth
 from firebase_functions import https_fn, options
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response, stream_with_context
 from auth_decorator import login_required, login_or_anonymous_required
 import google.cloud.firestore
 from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter
 import os
-# from utility import generate_invite_code, generate_default_profile_image, upload_to_storage, update_option_selection_count,\
-#     enrich_members_data
 from logger import logger
 from datetime import datetime, UTC, timezone
 from google.cloud.firestore_v1.field_path import FieldPath
@@ -22,9 +20,8 @@ from utility import is_valid_email, convert_audio_sample_rate, create_tmp_file, 
 from enum import Enum
 import uuid
 import requests
-import io
 import json
-import time
+import ollama
 
 initialize_app(
     options={"storageBucket": f"{PROJECT_ID.value}.firebasestorage.app"})
@@ -317,6 +314,31 @@ def get_conversation(customer_id, conversation_id):
             "createdAt").isoformat()
         conversation_json["id"] = conversation_doc_ref.id
         return jsonify(conversation_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/customers/<customer_id>/ai/chat")
+@login_required
+def ai_chat(customer_id):
+    try:
+        request_data = request.get_json()
+        request_message = request_data.get("message")
+        role = "assistant"
+
+        messages = [{"role": role, "content": request_message}]
+
+        ollama_client = ollama.Client(os.getenv('OLLAMA_API_URL'))
+
+        def generate():
+            for part in ollama_client.chat(model='gemma3:4b', messages=messages, stream=True):
+                content = part.get('message', {}).get('content', '')
+                if content:
+                    # Format as Server-Sent Events (SSE)
+                    yield f"data: {content}\n\n"
+
+        return Response(stream_with_context(generate()), mimetype='text/event-stream')
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
