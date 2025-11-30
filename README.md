@@ -20,9 +20,9 @@ content-type: application/json
 
 ## Services
 
-### Ollama API
+### LLM API
 
-The in app AI chat assistent utilizes an open source model served via [Ollama](https://ollama.com/). The model is deployed to Cloud Run, and accessible from the app via a simple URL. The service configuration is located in [deployment/ollama-cf.Dockerfile](./deployment/ollama-cf.Dockerfile). 
+The in app AI chat assistent utilizes an open source model served via [Ollama](https://ollama.com/). The model is deployed to Cloud Run, and accessible from the app via a simple URL. The service configuration is located in [services/llm-api/Dockerfile](./services/llm-api/Dockerfile). 
 
 Reference Guide: [GPU support for services](https://cloud.google.com/run/docs/configuring/services/gpu).
 
@@ -44,7 +44,7 @@ gcloud auth configure-docker us-central1-docker.pkg.dev
 
 export PROJECT_ID=mason-b4c0a &&
 export REPOSITORY=docker-repo &&
-export SERVICE_NAME=ollama-api &&
+export SERVICE_NAME=llm-api &&
 export IMAGE_URL=us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE_NAME
 
 cd services/$SERVICE_NAME
@@ -76,9 +76,10 @@ gcloud run deploy $SERVICE_NAME \
 # TODO: Remove --allow-unauthenticated once auth is updated and ready for production. 
 ```
 ```bash
-# Example requests for Ollama API / LLM models
+# Example requests for LLM API / models
 
-CR_SERVICE_URL=https://ollama-cr-806142703984.us-central1.run.app
+CR_SERVICE_URL=https://llm-api-806142703984.us-central1.run.app
+
 
 curl $CR_SERVICE_URL/api/generate \
   -d '{
@@ -147,4 +148,38 @@ curl -X GET \
 curl -X POST \
   -F "file=@//Users/anthonywhite/Downloads/interview-hazel.m4a" \
   $CR_SERVICE_URL/transcribe
+```
+
+
+### Vector DB
+
+```bash
+# Build Docker container first
+
+export PROJECT_ID=mason-b4c0a &&
+export REPOSITORY=docker-repo &&
+export SERVICE_NAME=vector-db &&
+export IMAGE_URL=us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE_NAME
+
+cd services/$SERVICE_NAME
+
+# Build docker image locally before pushing it to Artifact Repository. Greatly reduces Cloud Build cost (associated with $gcloud build submit).
+
+docker build --platform=linux/amd64 -t $IMAGE_URL .
+
+docker push $IMAGE_URL
+
+# Deploy to Cloud Run
+gcloud run deploy $SERVICE_NAME \
+    --image $IMAGE_URL \
+    --project $PROJECT_ID \
+    --region us-central1 \
+    --concurrency 10 \
+    --cpu 4 \
+    --max-instances 3 \
+    --memory 16Gi \
+    --no-cpu-throttling \
+    --allow-unauthenticated \
+    --port 6333 \
+    --timeout=600 
 ```
