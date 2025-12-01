@@ -1,11 +1,10 @@
 import re
 import io
 from werkzeug.datastructures import FileStorage
-import librosa
 import os
 import tempfile
 from firebase_admin import storage
-import soundfile
+import subprocess
 
 
 def is_valid_email(email: str) -> bool:
@@ -41,12 +40,27 @@ def convert_audio_sample_rate(file_path, sample_rate: int = 16000):
     Returns (audio_array, sample_rate) tuple.
     """
     try:
-        # librosa automatically resamples during load
-        wav_file, sr = librosa.load(file_path, sr=sample_rate)
+        # Use FFmpeg to convert directly to stdout
+        command = [
+            'ffmpeg',
+            '-i', file_path,
+            '-ar', str(sample_rate),  # Resample
+            '-ac', '1',  # Mono
+            '-f', 'wav',  # Output format
+            '-'  # Output to stdout
+        ]
 
-        wav_bytes_io = io.BytesIO()
-        soundfile.write(wav_bytes_io, wav_file.T if wav_file.ndim >
-                        1 else wav_file, sr, format="WAV")
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            check=True,
+            timeout=30
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(f"FFmpeg failed: {result.stderr.decode()}")
+
+        wav_bytes_io = io.BytesIO(result.stdout)
         wav_bytes_io.seek(0)  # rewind to the start
 
         return wav_bytes_io
