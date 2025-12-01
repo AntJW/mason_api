@@ -1,6 +1,6 @@
 from qdrant_client import models, QdrantClient
 from qdrant_client.conversions.common_types import Filter
-from embeddings_api_client import EmbeddingsAPIClient
+from embeddings_client import EmbeddingsAPIClient
 import os
 
 

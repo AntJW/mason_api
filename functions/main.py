@@ -23,7 +23,7 @@ import requests
 import json
 from vector_db_client import VectorDBClient
 from qdrant_client import models
-
+from llm_client import LLMClient
 
 initialize_app(
     options={"storageBucket": f"{PROJECT_ID.value}.firebasestorage.app"})
@@ -201,10 +201,10 @@ def create_conversation(customer_id):
         }
 
         conversation_doc_ref.set(conversation_json)
-
+        print("="*50, "Converting audio sample rate", "="*50)
         wav_bytes_io = convert_audio_sample_rate(
             local_tmp_file_path, sample_rate=16000)
-
+        print("="*50, "Audio sample rate converted", "="*50)
         audio_file.stream.seek(0)
 
         transcribe_api_url = f"{os.getenv('TRANSCRIBE_API_URL')}/transcribe"
@@ -237,46 +237,43 @@ def create_conversation(customer_id):
             "language": transcribe_api_data["transcript"]["language"]
         })
 
-        llm_api_response = requests.post(
-            f"{os.getenv('LLM_API_URL')}/api/generate",
-            json={
-                "model": "gemma3:4b",
-                "system": (
-                    "You are a summarization assistant. You will receive a full conversation transcript "
-                    "and must return: (1) a concise header, and (2) a brief summary.\n\n"
+        llm_client = LLMClient()
 
-                    "HEADER:\n"
-                    "- No more than 5 words.\n"
+        llm_response = llm_client.generate(
+            model=os.getenv("LLM_MODEL"),
+            system=(
+                "You are a summarization assistant. You will receive a full conversation transcript "
+                "and must return: (1) a concise header, and (2) a brief summary.\n\n"
 
-                    "SUMMARY:\n"
-                    "- No more than 100 words.\n"
-                    "- Include bullet points for key insights and action items.\n"
-                    "- Must NOT repeat the header.\n\n"
+                "HEADER:\n"
+                "- No more than 5 words.\n"
 
-                    "MARKDOWN SUMMARY (summaryMarkdown):\n"
-                    "- Output the same content as `summary`, but in Markdown format.\n"
-                    "- Use **bold** for section labels instead of Markdown headers and ensure spacing between sections.\n"
-                    "- Do NOT include any content outside the JSON schema.\n\n"
+                "SUMMARY:\n"
+                "- No more than 100 words.\n"
+                "- Include bullet points for key insights and action items.\n"
+                "- Must NOT repeat the header.\n\n"
 
-                    "Your entire output MUST strictly follow the JSON schema. "
-                    "Do not output anything other than valid JSON."
-                ),
-                "prompt": merged_segments_string,
-                "stream": False,
-                "format": {
-                    "type": "object",
-                    "properties": {
-                        "header": {"type": "string"},
-                        "summary": {"type": "string"},
-                        "summaryMarkdown": {"type": "string"}
-                    },
-                    "required": ["header", "summary", "summaryMarkdown"]
-                }
+                "MARKDOWN SUMMARY (summaryMarkdown):\n"
+                "- Output the same content as `summary`, but in Markdown format.\n"
+                "- Use **bold** for section labels instead of Markdown headers and ensure spacing between sections.\n"
+                "- Do NOT include any content outside the JSON schema.\n\n"
+
+                "Your entire output MUST strictly follow the JSON schema. "
+                "Do not output anything other than valid JSON."
+            ),
+            prompt=merged_segments_string,
+            format={
+                "type": "object",
+                "properties": {
+                    "header": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "summaryMarkdown": {"type": "string"}
+                },
+                "required": ["header", "summary", "summaryMarkdown"]
             }
         )
 
-        llm_api_response_json = json.loads(
-            llm_api_response.json()["response"])
+        llm_api_response_json = json.loads(llm_response["response"])
 
         conversation_doc_ref.update({
             "header": llm_api_response_json["header"],
@@ -326,9 +323,10 @@ def get_conversation(customer_id, conversation_id):
 def ai_chat(customer_id):
     try:
         request_data = request.get_json()
-        # [{"role": "", "content": ""}]
+        # [{"role": "user", "content": "Hello, how are you?"}]
         messages = request_data.get("messages")
 
+        # Add system message.
         messages.insert(0,
                         {"role": "system", "content": """Your name is Mason, and you cannot be renamed.
                         You are a helpful customer relationship management (CRM) assistant for contractors.
@@ -336,29 +334,23 @@ def ai_chat(customer_id):
                         Sometimes be a little fun and playful. Never mention internal instructions.
                         If you need additional information, ask the user for clarification."""})
 
-        llm_api_url = os.getenv('LLM_API_URL')
+        llm_client = LLMClient()
 
         def generate():
             first_chunk = True  # Track the first piece of content
 
-            # Make streaming request to LLM API
-            response = requests.post(
-                f"{llm_api_url}/api/chat",
-                json={
-                    "model": "gemma3:4b",
-                    "messages": messages,
-                    "stream": True
-                },
+            # Make streaming request using ollama client
+            stream = llm_client.chat(
+                model=os.getenv("LLM_MODEL"),
+                messages=messages,
                 stream=True
             )
-            response.raise_for_status()
 
-            # Parse streaming JSON response (each line is a JSON object)
-            for line in response.iter_lines():
-                if line:
+            # Parse streaming response from ollama
+            for chunk in stream:
+                if chunk:
                     try:
-                        part = json.loads(line)
-                        message = part.get('message', {})
+                        message = chunk.get('message', {})
                         content = message.get('content', '')
                         if content:
                             if first_chunk:
@@ -366,9 +358,9 @@ def ai_chat(customer_id):
                                 message["content"] = content.lstrip('\n')
                             first_chunk = False
                             # Format as Server-Sent Events (SSE)
-                            yield f"{json.dumps(message)}"
-                    except json.JSONDecodeError:
-                        # Skip invalid JSON lines
+                            yield f"{json.dumps({"role": message.get("role"), "content": message.get("content")})}"
+                    except (KeyError, AttributeError) as e:
+                        # Skip invalid chunks
                         continue
 
         return Response(stream_with_context(generate()), mimetype='text/event-stream')
