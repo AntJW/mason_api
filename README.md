@@ -1,5 +1,16 @@
 ## Local Development
 
+```bash
+# Prerequisites
+
+# FFMPEG is required for audio file conversion. This is done to update the sample rate. 
+# The use of wav files are common with transcribe and diarization models so that is the 
+# format audio files are sent to them. However, the original m4a files from mobile 
+# devices are preserved and saved to the database.
+
+brew install ffmpeg
+```
+
 ### Firebase Emulator 
 <!-- Specifying FIREBASE_AUTH_EMULATOR_HOST enables this api to connect to the flutter app repo's auth emulator. -->
 export FIREBASE_AUTH_EMULATOR_HOST="127.0.0.1:9099" && firebase emulators:start
