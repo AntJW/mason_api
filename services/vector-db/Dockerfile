@@ -6,3 +6,5 @@ EXPOSE 6333
 EXPOSE 6334
 
 VOLUME /qdrant/storage
+
+# Entrypoint is in the qdrant/qdrant image
