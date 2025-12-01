@@ -20,13 +20,6 @@ content-type: application/json
 
 ## Services
 
-### LLM API
-
-The in app AI chat assistent utilizes an open source model served via [Ollama](https://ollama.com/). The model is deployed to Cloud Run, and accessible from the app via a simple URL. The service configuration is located in [services/llm-api/Dockerfile](./services/llm-api/Dockerfile). 
-
-Reference Guide: [GPU support for services](https://cloud.google.com/run/docs/configuring/services/gpu).
-
-
 ```bash
 # Prerequisites
 
@@ -37,6 +30,13 @@ Reference Guide: [GPU support for services](https://cloud.google.com/run/docs/co
 # Configures Docker to use the Google Cloud CLI as a credential helper for authenticating with Artifact Registry
 gcloud auth configure-docker us-central1-docker.pkg.dev
 ```
+
+
+### LLM API
+
+The in app AI chat assistent utilizes an open source model served via [Ollama](https://ollama.com/). The model is deployed to Cloud Run, and accessible from the app via a simple URL. The service configuration is located in [services/llm-api/Dockerfile](./services/llm-api/Dockerfile). 
+
+Reference Guide: [GPU support for services](https://cloud.google.com/run/docs/configuring/services/gpu).
 
 
 ```bash
@@ -181,5 +181,38 @@ gcloud run deploy $SERVICE_NAME \
     --no-cpu-throttling \
     --allow-unauthenticated \
     --port 6333 \
+    --timeout=600 
+```
+
+### Embeddings API
+
+```bash
+# Build Docker container first
+
+export PROJECT_ID=mason-b4c0a &&
+export REPOSITORY=docker-repo &&
+export SERVICE_NAME=embeddings-api &&
+export IMAGE_URL=us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE_NAME
+
+cd services/$SERVICE_NAME
+
+# Build docker image locally before pushing it to Artifact Repository. Greatly reduces Cloud Build cost (associated with $gcloud build submit).
+
+docker build --platform=linux/amd64 -t $IMAGE_URL .
+
+docker push $IMAGE_URL
+
+# Deploy to Cloud Run
+gcloud run deploy $SERVICE_NAME \
+    --image $IMAGE_URL \
+    --project $PROJECT_ID \
+    --region us-central1 \
+    --concurrency 10 \
+    --cpu 4 \
+    --max-instances 3 \
+    --memory 16Gi \
+    --no-cpu-throttling \
+    --allow-unauthenticated \
+    --port 11434 \
     --timeout=600 
 ```

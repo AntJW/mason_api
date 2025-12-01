@@ -461,25 +461,17 @@ def vector_db_test():
                 "year": 2008,
             },
         ]
+
+        # vector_client.create_collection()
+
         # vector_client.upload_documents(documents)
 
-        vector_client.create_collection(
-            collection_name="my_books",
-            vectors_config=models.VectorParams(
-                # Vector size is defined by used model
-                size=vector_client.encoder.get_sentence_embedding_dimension(),
-                distance=models.Distance.COSINE,
-            ),
-        )
+        hits = vector_client.query(query="alien invasion", limit=3, query_filter=models.Filter(
+            must=[models.FieldCondition(
+                key="year", range=models.Range(gte=2000))]
+        ))
 
-        # vector_client.encoder
-
-        # hits = vector_client.query(query="alien invasion", limit=3, query_filter=models.Filter(
-        #     must=[models.FieldCondition(
-        #         key="year", range=models.Range(gte=2000))]
-        # ))
-
-        # print(hits)
+        print(hits)
 
         return jsonify({"message": "Done!"}), 200
     except Exception as e:

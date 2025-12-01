@@ -9,18 +9,18 @@ COPY --from=ollama /usr/lib/ollama/libggml-cpu-* /usr/lib/ollama/
 COPY --from=ollama /usr/lib/ollama/libggml-base.so /usr/lib/ollama/libggml-base.so
 
 # Environment variable setup
-ENV OLLAMA_HOST 0.0.0.0
+ENV OLLAMA_HOST=0.0.0.0
 
 # Never unload model weights from the CPU.
-ENV OLLAMA_KEEP_ALIVE -1
+ENV OLLAMA_KEEP_ALIVE=-1
 
 # Store model weight files in /models
-ENV OLLAMA_MODELS /models
+ENV OLLAMA_MODELS=/models
 
 # Reduce log verbosity.
-ENV OLLAMA_DEBUG false
+ENV OLLAMA_DEBUG=false
 
-ENV MODEL nomic-embed-text-v1.5
+ENV MODEL=nomic-embed-text:v1.5
 
 # Expose port for the service
 EXPOSE 11434
