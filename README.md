@@ -153,6 +153,16 @@ curl -X POST \
 
 ### Vector DB
 
+[Qdrant](https://qdrant.tech/) is the vector database used. The open source version deployed as a Cloud Run Service.
+
+* REST API: localhost:6333
+* Web UI: localhost:6333/dashboard
+* GRPC API: localhost:6334
+
+Vector size used: *768* (defined by embeddings model, nomic-embed-text-v1.5)
+
+Multitenancy is created by using customerId in payload (see more [here](https://qdrant.tech/documentation/guides/multitenancy/)). Only one [collection](https://qdrant.tech/documentation/concepts/collections/) in Qdrant is used.
+
 ```bash
 # Build Docker container first
 
@@ -185,6 +195,14 @@ gcloud run deploy $SERVICE_NAME \
 ```
 
 ### Embeddings API
+
+Embeddings Model: [nomic-embed-text-v1.5](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5)
+
+The embeddings-api service is deployed on Cloud Run and accessible via Ollama API.
+
+This model is multimodal, meaning it can embed text and images. Both have the same vector size 768, which means they can be stored and queried in the same collection.
+
+Vector output size: *768*
 
 ```bash
 # Build Docker container first
