@@ -16,7 +16,7 @@ from logger import logger
 from datetime import datetime, UTC, timezone
 from google.cloud.firestore_v1.field_path import FieldPath
 from firebase_functions.params import PROJECT_ID
-from utility import is_valid_email, convert_audio_sample_rate, create_tmp_file, upload_to_storage, delete_tmp_file
+from utility import is_valid_email, convert_audio_sample_rate, create_tmp_file, upload_to_storage, delete_tmp_file, download_from_storage
 from enum import Enum
 import uuid
 import requests
@@ -24,6 +24,7 @@ import json
 from vector_db_client import VectorDBClient
 from qdrant_client import models
 from llm_client import LLMClient
+
 
 initialize_app(
     options={"storageBucket": f"{PROJECT_ID.value}.firebasestorage.app"})
@@ -175,10 +176,6 @@ def create_conversation(customer_id):
         user_uid = user.get("uid")
         request_form = request.form
         duration = int(request_form.get("duration"))
-
-        # Receive audio file from request (multipart/form-data)
-        if "file" not in request.files:
-            return jsonify({"error": "No audio file provided"}), 400
         audio_file = request.files["file"]
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
@@ -197,15 +194,15 @@ def create_conversation(customer_id):
             "audioStoragePath": storage_file_path,
             "createdAt": SERVER_TIMESTAMP,
             "duration": duration,
-            "status": "processing"
+            "status": "uploaded"
         }
 
         conversation_doc_ref.set(conversation_json)
 
+        # TODO: Move the rest of the logic below to a separate endpoint. This will be called by conversation widget/viewmodel
+
         wav_bytes_io = convert_audio_sample_rate(
             local_tmp_file_path, sample_rate=16000)
-        print("="*50, "Audio sample rate converted", "="*50)
-        audio_file.stream.seek(0)
 
         transcribe_api_url = f"{os.getenv('TRANSCRIBE_API_URL')}/transcribe"
         transcribe_api_response = requests.post(
@@ -241,6 +238,7 @@ def create_conversation(customer_id):
 
         llm_response = llm_client.generate(
             model=os.getenv("LLM_MODEL"),
+            stream=False,
             system=(
                 "You are a summarization assistant. You will receive a full conversation transcript "
                 "and must return: (1) a concise header, and (2) a brief summary.\n\n"
@@ -292,11 +290,83 @@ def create_conversation(customer_id):
         response_dict["id"] = conversation_id
 
         delete_tmp_file(local_tmp_file_path)
-        return jsonify(response_dict), 201
+
+        return jsonify({response_dict}), 201
     except Exception as e:
         conversation_doc_ref.delete()
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+# Trigger transcription for a specific conversation
+@app.post("/customers/<customer_id>/conversations/<conversation_id>/transcribe")
+@login_required
+def transcribe_conversation(customer_id, conversation_id):
+    try:
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        conversation_doc_ref = firestore_client.collection(
+            "conversations").document(conversation_id)
+        conversation_doc = conversation_doc_ref.get(field_paths=[
+                                                    "audioStoragePath"])
+
+        audio_storage_path = conversation_doc.get("audioStoragePath")
+
+        local_tmp_file_path = download_from_storage(audio_storage_path)
+
+        wav_bytes_io = convert_audio_sample_rate(
+            local_tmp_file_path, sample_rate=16000)
+
+        transcribe_api_response = requests.post(
+            f"{os.getenv('TRANSCRIBE_API_URL')}/transcribe", files={"file": ("audio.wav", wav_bytes_io, "audio/wav")})
+
+        transcribe_api_response.raise_for_status()
+
+        print("="*50, "Transcribe API Response", "="*50)
+        print(transcribe_api_response.json())
+
+        transcribe_api_data = transcribe_api_response.json()
+
+        print("="*50, "Transcribe API Data", "="*50)
+        # TODO: Overlap whisper and pyannote timestamps to get the start and end of each speaker's turn
+
+        # merged transcript and speaker segments (start, end, text, speaker)
+        merged_segments = []
+        merged_segments_string = ""
+        for segment in transcribe_api_data["transcript"]["segments"]:
+            merged_segments.append({
+                "start": segment["start"],
+                "end": segment["end"],
+                "text": segment["text"],
+                # TODO: After overlapping timestamps, we need to assign the correct speaker to each segment
+                "speaker": "Speaker 1"
+            })
+            # TODO: After overlapping timestamps, we need to assign the correct speaker to each segment
+            merged_segments_string += f"Speaker 1: {segment["text"]}\n"
+
+        conversation_doc_ref.update({
+            "transcriptRaw": transcribe_api_data["transcript"]["text"],
+            # list of transcript segments (start, end, text)
+            "transcriptSegments": transcribe_api_data["transcript"]["segments"],
+            # list of speaker segments (start, end, speaker)
+            "speakerSegments": transcribe_api_data["speakers"],
+            "transcript": merged_segments,
+            "language": transcribe_api_data["transcript"]["language"],
+            "status": "transcribed"
+        })
+
+        return jsonify({"message": "Done!"}), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Trigger summary generation for a specific conversation
+
+
+@app.post("/customers/<customer_id>/conversations/<conversation_id>/summarize")
+@login_required
+def summarize_conversation(customer_id, conversation_id):
+    """Generate streaming summary"""
+    pass
 
 
 @app.get("/customers/<customer_id>/conversations/<conversation_id>")
