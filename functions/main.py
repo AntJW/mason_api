@@ -298,7 +298,9 @@ def create_conversation(customer_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Trigger transcription for a specific conversation
+# TODO: Update this function prior to using it for streaming transcription.
+# Currently it is not used, but will be used for conversation screen to display
+# transcription in real-time.
 @app.post("/customers/<customer_id>/conversations/<conversation_id>/transcribe")
 @login_required
 def transcribe_conversation(customer_id, conversation_id):
@@ -354,19 +356,76 @@ def transcribe_conversation(customer_id, conversation_id):
             "status": "transcribed"
         })
 
+        delete_tmp_file(local_tmp_file_path)
+
         return jsonify({"message": "Done!"}), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# Trigger summary generation for a specific conversation
 
-
+# TODO: Update this function prior to using it for streaming summary generation.
+# Currently it is not used, but will be used for conversation screen to display
+# summarygeneration in real-time.
 @app.post("/customers/<customer_id>/conversations/<conversation_id>/summarize")
 @login_required
 def summarize_conversation(customer_id, conversation_id):
-    """Generate streaming summary"""
-    pass
+    llm_client = LLMClient().client
+
+    llm_response = llm_client.generate(
+        model=os.getenv("LLM_MODEL"),
+        stream=False,
+        system=(
+            "You are a summarization assistant. You will receive a full conversation transcript "
+            "and must return: (1) a concise header, and (2) a brief summary.\n\n"
+
+            "HEADER:\n"
+            "- No more than 5 words.\n"
+
+            "SUMMARY:\n"
+            "- No more than 100 words.\n"
+            "- Include bullet points for key insights and action items.\n"
+            "- Must NOT repeat the header.\n\n"
+
+            "MARKDOWN SUMMARY (summaryMarkdown):\n"
+            "- Output the same content as `summary`, but in Markdown format.\n"
+            "- Use **bold** for section labels instead of Markdown headers and ensure spacing between sections.\n"
+            "- Do NOT include any content outside the JSON schema.\n\n"
+
+            "Your entire output MUST strictly follow the JSON schema. "
+            "Do not output anything other than valid JSON."
+        ),
+        prompt=merged_segments_string,
+        format={
+            "type": "object",
+            "properties": {
+                "header": {"type": "string"},
+                "summary": {"type": "string"},
+                "summaryMarkdown": {"type": "string"}
+            },
+            "required": ["header", "summary", "summaryMarkdown"]
+        }
+    )
+
+    llm_api_response_json = json.loads(llm_response["response"])
+
+    conversation_doc_ref.update({
+        "header": llm_api_response_json["header"],
+        # raw summary text
+        "summaryRaw": llm_api_response_json["summary"],
+        # summary text in markdown format
+        "summary": llm_api_response_json["summaryMarkdown"],
+        "status": "completed"
+    })
+
+    response_doc = conversation_doc_ref.get(field_paths=[
+                                            "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript"])
+    response_dict = response_doc.to_dict()
+    response_dict["createdAt"] = response_doc.get(
+        "createdAt").isoformat()
+    response_dict["id"] = conversation_id
+
+    delete_tmp_file(local_tmp_file_path)
 
 
 @app.get("/customers/<customer_id>/conversations/<conversation_id>")
