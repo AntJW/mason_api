@@ -91,7 +91,7 @@ def get_customers():
         user_uid = user.get("uid")
         firestore_client: google.cloud.firestore.Client = firestore.client()
         customer_docs = firestore_client.collection(
-            "customers").where("userId", "==", user_uid).get()
+            "customers").where(filter=FieldFilter("userId", "==", user_uid)).get()
 
         customers_list = []
         for customer_doc in customer_docs:
@@ -442,6 +442,36 @@ def get_conversation(customer_id, conversation_id):
             "createdAt").isoformat()
         conversation_json["id"] = conversation_doc_ref.id
         return jsonify(conversation_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/customers/<customer_id>/conversations")
+@login_required
+def get_conversations(customer_id):
+    try:
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        conversations_docs = firestore_client.collection(
+            "conversations").where(filter=FieldFilter("customerId", "==", customer_id)).get()
+        conversations_list = []
+        for conversation_doc in conversations_docs:
+            conversation_json = dict()
+            conversation_json["id"] = conversation_doc.id
+            conversation_json["customerId"] = conversation_doc.get(
+                "customerId")
+            conversation_json["audioStoragePath"] = conversation_doc.get(
+                "audioStoragePath")
+            conversation_json["header"] = conversation_doc.get("header")
+            conversation_json["summary"] = conversation_doc.get("summary")
+            conversation_json["transcript"] = conversation_doc.get(
+                "transcript")
+            conversation_json["createdAt"] = conversation_doc.get(
+                "createdAt").isoformat()
+            conversation_json["duration"] = conversation_doc.get("duration")
+
+            conversations_list.append(conversation_json)
+        return jsonify(conversations_list), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
