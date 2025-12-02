@@ -16,7 +16,7 @@ from logger import logger
 from datetime import datetime, UTC, timezone
 from google.cloud.firestore_v1.field_path import FieldPath
 from firebase_functions.params import PROJECT_ID
-from utility import is_valid_email, convert_audio_sample_rate, create_tmp_file, upload_to_storage, delete_tmp_file, download_from_storage
+from utility import is_valid_email, convert_audio_sample_rate, save_file_to_tmp, upload_to_storage, delete_tmp_file, download_from_storage
 from enum import Enum
 import uuid
 import requests
@@ -180,7 +180,7 @@ def create_conversation(customer_id):
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
 
-        local_tmp_file_path = create_tmp_file(audio_file)
+        local_tmp_file_path = save_file_to_tmp(audio_file)
 
         storage_file_path = f"audio/customers/{customer_id}/{uuid.uuid4()}.m4a"
         upload_to_storage(local_tmp_file_path, storage_file_path)

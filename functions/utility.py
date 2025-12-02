@@ -93,7 +93,7 @@ def download_from_storage(storage_file_path) -> str:
         raise e
 
 
-def create_tmp_file(file: FileStorage) -> str:
+def save_file_to_tmp(file: FileStorage) -> str:
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
         file.save(tmp.name)
         tmp_path = tmp.name
