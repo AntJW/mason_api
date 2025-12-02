@@ -79,7 +79,18 @@ def upload_to_storage(local_tmp_file_path, storage_file_path, make_public: bool 
 
         return blob
     except Exception as e:
-        pass
+        raise e
+
+
+def download_from_storage(storage_file_path) -> str:
+    try:
+        local_tmp_file_path = tempfile.NamedTemporaryFile(delete=False).name
+        bucket = storage.bucket()
+        blob = bucket.blob(storage_file_path)
+        blob.download_to_filename(local_tmp_file_path)
+        return local_tmp_file_path
+    except Exception as e:
+        raise e
 
 
 def create_tmp_file(file: FileStorage) -> str:
