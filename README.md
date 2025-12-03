@@ -164,7 +164,7 @@ curl -X POST \
 
 ### Vector DB
 
-[Qdrant](https://qdrant.tech/) is the vector database used. The open source version deployed as a Cloud Run Service.
+[Qdrant](https://qdrant.tech/) is the vector database used. The open source version deployed as a Cloud Run Service. For local development it can run in a docker container. 
 
 * REST API: localhost:6333
 * Web UI: localhost:6333/dashboard
@@ -188,6 +188,9 @@ cd services/$SERVICE_NAME
 
 docker build --platform=linux/amd64 -t $IMAGE_URL .
 
+# Local development
+docker run -p 6333:6333 $IMAGE_URL
+
 docker push $IMAGE_URL
 
 # Deploy to Cloud Run
@@ -209,7 +212,7 @@ gcloud run deploy $SERVICE_NAME \
 
 Embeddings Model: [nomic-embed-text-v1.5](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5)
 
-The embeddings-api service is deployed on Cloud Run and accessible via Ollama API.
+The embeddings-api service is deployed on Cloud Run and accessible via Ollama API. For local development it can run in a docker container. 
 
 This model is multimodal, meaning it can embed text and images. Both have the same vector size 768, which means they can be stored and queried in the same collection.
 
@@ -229,6 +232,10 @@ cd services/$SERVICE_NAME
 
 docker build --platform=linux/amd64 -t $IMAGE_URL .
 
+# Local development
+docker run -p 11434:11434 $IMAGE_URL
+
+# Push image to Artifactory Repository
 docker push $IMAGE_URL
 
 # Deploy to Cloud Run
