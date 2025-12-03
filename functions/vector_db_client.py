@@ -2,6 +2,18 @@ from qdrant_client import models, QdrantClient
 from qdrant_client.conversions.common_types import Filter
 from embeddings_client import EmbeddingsAPIClient
 import os
+from pydantic import BaseModel
+from typing import Literal, Optional
+import uuid
+
+
+class Document(BaseModel):
+    # content is the data to be vectorized
+    content: str
+    type: Literal["conversation_transcript"]
+    # userId is used for multitenancy
+    userId: str
+    customerId: Optional[str] = None
 
 
 class VectorDBClient:
@@ -16,7 +28,7 @@ class VectorDBClient:
             collection_name=self._collection_name,
             points=[
                 models.PointStruct(
-                    id=idx, vector=EmbeddingsAPIClient().embed(doc["description"]), payload=doc
+                    id=str(uuid.uuid4()), vector=EmbeddingsAPIClient().embed(doc["content"]), payload=doc
                 )
                 for idx, doc in enumerate(documents)
             ],
@@ -30,9 +42,10 @@ class VectorDBClient:
                 distance=distance))
 
     def query(self, query: str, limit: int = 10, query_filter: Filter = None):
-        return self._client.query_points(
+        response = self._client.query_points(
             collection_name=self._collection_name,
             query=EmbeddingsAPIClient().embed(query),
             limit=limit,
             query_filter=query_filter
         )
+        return response.points  # Return the points list, not the response object
