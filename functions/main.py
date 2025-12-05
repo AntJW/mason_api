@@ -168,6 +168,51 @@ def create_customer():
         return jsonify({"error": str(e)}), 500
 
 
+@app.put("/customers/<customer_id>/update")
+@login_required
+def update_customer(customer_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        request_data = request.get_json()
+
+        displayName = request_data.get("displayName")
+        firstName = request_data.get("firstName")
+        lastName = request_data.get("lastName")
+        email = request_data.get("email")
+        phone = request_data.get("phone")
+        address = request_data.get("address")
+        street = address.get("street")
+        street2 = address.get("street2")
+        city = address.get("city")
+        state = address.get("state")
+        postalCode = address.get("postalCode")
+        country = address.get("country")
+        status = request_data.get("status")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        customer_doc_ref = firestore_client.collection(
+            "customers").document(customer_id)
+
+        customer_doc_ref.update({
+            "displayName": displayName,
+            "firstName": firstName,
+            "lastName": lastName,
+            "email": email,
+            "phone": phone,
+            "address": address,
+            "status": status
+        })
+        customer_doc = customer_doc_ref.get(field_paths=[
+                                            "displayName", "firstName", "lastName", "email", "phone", "address", "status", "userId", "createdAt"])
+        customer_json = customer_doc.to_dict()
+        customer_json["id"] = customer_doc_ref.id
+        customer_json["createdAt"] = customer_doc.get("createdAt").isoformat()
+        return jsonify(customer_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+
+
 @app.post("/customers/<customer_id>/conversations/create")
 @login_required
 def create_conversation(customer_id):
@@ -223,7 +268,7 @@ def create_conversation(customer_id):
                 "speaker": "Speaker 1"
             })
             merged_segments_string += f"{segment.get('speaker')}: {segment.get('text')}\n"
-        print("="*50, "Merged Segments String", "="*50)
+
         conversation_doc_ref.update({
             "transcriptRaw": transcribe_api_data["transcript"]["text"],
             # list of transcript segments (start, end, text)
@@ -333,12 +378,8 @@ def transcribe_conversation(customer_id, conversation_id):
 
         transcribe_api_response.raise_for_status()
 
-        print("="*50, "Transcribe API Response", "="*50)
-        print(transcribe_api_response.json())
-
         transcribe_api_data = transcribe_api_response.json()
 
-        print("="*50, "Transcribe API Data", "="*50)
         # TODO: Overlap whisper and pyannote timestamps to get the start and end of each speaker's turn
 
         # merged transcript and speaker segments (start, end, text, speaker)
@@ -512,11 +553,6 @@ def ai_chat(customer_id):
                 ]
             ))
 
-        print(f"=" * 50)
-        print(f"customer_id: {customer_id}")
-        print(f"user_uid: {user_uid}")
-        print(f"{hits}")
-        print(f"=" * 50)
         past_conversations = ""
         for hit in hits:
             past_conversations += f"Transcript: {hit.payload.get('content')}\n\n"
@@ -665,8 +701,6 @@ def vector_db_test():
         #     must=[models.FieldCondition(
         #         key="year", range=models.Range(gte=2000))]
         # ))
-
-        # print(hits)
 
         return jsonify({"message": "Done!"}), 200
     except Exception as e:
