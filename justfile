@@ -4,6 +4,14 @@ set dotenv-path := "./services/.secret.local"
 default:
   just --list
 
+serve:
+    tmux kill-session -t dev_session 2>/dev/null || true
+    tmux new-session -d -s dev_session "just functions"
+    tmux split-window -v -t dev_session "just embeddings-api"
+    tmux split-window -v -t dev_session "just vector-db"
+    tmux select-layout -t dev_session tiled
+    tmux attach-session -t dev_session
+
 functions:
     export FIREBASE_AUTH_EMULATOR_HOST="127.0.0.1:9099" && firebase emulators:start
 
@@ -65,11 +73,3 @@ deploy-llm-api:
     --allow-unauthenticated \
     --port 11434 \
     --timeout=600
-
-serve-all:
-    tmux kill-session -t dev_session 2>/dev/null || true
-    tmux new-session -d -s dev_session "just functions"
-    tmux split-window -v -t dev_session "just embeddings-api"
-    tmux split-window -v -t dev_session "just vector-db"
-    tmux select-layout -t dev_session tiled
-    tmux attach-session -t dev_session
