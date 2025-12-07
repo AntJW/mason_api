@@ -64,6 +64,51 @@ def get_hello_world():
         return jsonify({"error": str(e)}), 500
 
 
+# Adds additional new user properties to firestore database that are not able to be stored in Firebase Authentication.
+@app.post("/users/me/properties")
+@login_required
+def create_new_user_properties():
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        user_record = auth.get_user(user_uid)
+        request_data = request.get_json()
+        firstName = request_data.get("firstName")
+        lastName = request_data.get("lastName")
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+
+        # outputs epoch time in milliseconds
+        created_at_epoch_time = user_record.user_metadata.creation_timestamp
+        # convert milliseconds to seconds before conversion
+        created_at_timestamp = datetime.fromtimestamp(
+            created_at_epoch_time / 1000.0)
+
+        display_name = f"{firstName} {lastName}"
+
+        auth.update_user(user_uid, display_name=display_name)
+
+        firestore_client.collection("users").document(user_uid).set(
+            {
+                "email": user_record.email,
+                "displayName": display_name,
+                "firstName": firstName,
+                "lastName": lastName,
+                "createdAt": created_at_timestamp
+            })
+
+        updated_user_doc = firestore_client.collection(
+            "users").document(user_uid).get()
+        updated_user_json = updated_user_doc.to_dict()
+        updated_user_json["createdAt"] = updated_user_doc.get(
+            "createdAt").isoformat()
+        updated_user_json["id"] = user_uid
+
+        return jsonify(updated_user_json), 201
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.get("/customers/<customer_id>")
 @login_required
 def get_customer(customer_id):
