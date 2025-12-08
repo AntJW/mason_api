@@ -298,7 +298,14 @@ def create_conversation(customer_id):
 
         conversation_doc_ref.set(conversation_json)
 
-        return jsonify({"id": conversation_id}), 201
+        conversation_doc = conversation_doc_ref.get(
+            field_paths=["customerId", "audioStoragePath", "createdAt", "duration", "status"])
+        conversation_json = conversation_doc.to_dict()
+        conversation_json["createdAt"] = conversation_doc.get(
+            "createdAt").isoformat()
+        conversation_json["id"] = conversation_id
+
+        return jsonify(conversation_json), 201
     except Exception as e:
         conversation_doc_ref.delete()
         logger.error(f"error: {e}")
@@ -309,6 +316,8 @@ def create_conversation(customer_id):
 @login_required
 def transcribe_conversation(customer_id, conversation_id):
     try:
+        user = request.user
+        user_uid = user.get("uid")
         firestore_client: google.cloud.firestore.Client = firestore.client()
         conversation_doc_ref = firestore_client.collection(
             "conversations").document(conversation_id)
@@ -333,14 +342,27 @@ def transcribe_conversation(customer_id, conversation_id):
 
         # merged transcript and speaker segments (start, end, text, speaker)
         merged_segments = []
+        merged_segments_string = ""
         for segment in transcribe_api_data["transcript"]["segments"]:
+            # TODO: After overlapping timestamps, we need to assign the correct
+            # speaker to each segment using segment["speaker"] instead of the
+            # hardcoded "Speaker 1".
+            speaker = "Speaker 1"
             merged_segments.append({
                 "start": segment["start"],
                 "end": segment["end"],
                 "text": segment["text"],
-                # TODO: After overlapping timestamps, we need to assign the correct speaker to each segment
-                "speaker": "Speaker 1"
+                "speaker": speaker
             })
+            merged_segments_string += f"{speaker}: {segment.get('text')}\n"
+
+        vector_db_client = VectorDBClient()
+        vector_db_client.upload_documents([{
+            "content": merged_segments_string,
+            "type": "conversation_transcript",
+            "userId": user_uid,
+            "customerId": customer_id,
+        }])
 
         conversation_doc_ref.update({
             "transcriptRaw": transcribe_api_data["transcript"]["text"],
@@ -353,10 +375,8 @@ def transcribe_conversation(customer_id, conversation_id):
             "status": "transcribed"
         })
 
-        delete_tmp_file(local_tmp_file_path)
-
         response_doc = conversation_doc_ref.get(field_paths=[
-            "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript"])
+            "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript", "status"])
         response_dict = response_doc.to_dict()
         response_dict["createdAt"] = response_doc.get(
             "createdAt").isoformat()
@@ -396,24 +416,16 @@ def summarize_conversation(customer_id, conversation_id):
             model=os.getenv("LLM_MODEL"),
             stream=False,
             system=(
-                "You are a summarization assistant. You will receive a full conversation transcript "
-                "and must return: (1) a concise header, and (2) a brief summary.\n\n"
-
-                "HEADER:\n"
-                "- No more than 5 words.\n"
-
-                "SUMMARY:\n"
-                "- No more than 100 words.\n"
-                "- Include bullet points for key insights and action items.\n"
-                "- Must NOT repeat the header.\n\n"
-
-                "MARKDOWN SUMMARY (summaryMarkdown):\n"
-                "- Output the same content as `summary`, but in Markdown format.\n"
-                "- Use **bold** for section labels instead of Markdown headers and ensure spacing between sections.\n"
-                "- Do NOT include any content outside the JSON schema.\n\n"
-
-                "Your entire output MUST strictly follow the JSON schema. "
-                "Do not output anything other than valid JSON."
+                "You are a summarization assistant.\n\n"
+                "Provide:\n"
+                "1. header: 2-5 word title\n"
+                "2. summaryPlain: Plain text summary (no formatting, max 100 words)\n"
+                "3. summaryMarkdown: Same content as summaryPlain but formatted with markdown:\n"
+                "   - Use **Key Insights:** and **Action Items:** as section headers\n"
+                "   - Use * for bullet points\n"
+                "   - Use **bold** for section labels instead of Markdown headers\n"
+                "   - Add two newlines (blank line) between sections\n\n"
+                "Output valid JSON only."
             ),
             prompt=merged_segments_string,
             format={
@@ -435,24 +447,14 @@ def summarize_conversation(customer_id, conversation_id):
             "summaryRaw": llm_api_response_json["summary"],
             # summary text in markdown format
             "summary": llm_api_response_json["summaryMarkdown"],
-            "status": "completed"
+            "status": "summarized"
         })
 
-        vector_db_client = VectorDBClient()
-        vector_db_client.upload_documents([{
-            "content": merged_segments_string,
-            "type": "conversation_transcript",
-            "userId": user_uid,
-            "customerId": customer_id,
-        }])
-
         response_doc = conversation_doc_ref.get(field_paths=[
-                                                "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript"])
+                                                "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript", "status"])
         response_dict = response_doc.to_dict()
-
         response_dict["createdAt"] = response_doc.get(
             "createdAt").isoformat()
-
         response_dict["id"] = conversation_id
 
         return jsonify(response_dict), 200
@@ -469,7 +471,7 @@ def get_conversation(customer_id, conversation_id):
         conversation_doc_ref = firestore_client.collection(
             "conversations").document(conversation_id)
         conversation_doc = conversation_doc_ref.get(field_paths=[
-                                                    "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript"])
+                                                    "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript", "status"])
         conversation_json = conversation_doc.to_dict()
         conversation_json["createdAt"] = conversation_doc.get(
             "createdAt").isoformat()
@@ -502,6 +504,7 @@ def get_conversations(customer_id):
             conversation_json["createdAt"] = conversation_doc.get(
                 "createdAt").isoformat()
             conversation_json["duration"] = conversation_doc.get("duration")
+            conversation_json["status"] = conversation_doc.get("status")
 
             conversations_list.append(conversation_json)
         return jsonify(conversations_list), 200
