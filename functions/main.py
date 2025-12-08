@@ -298,110 +298,6 @@ def create_conversation(customer_id):
 
         conversation_doc_ref.set(conversation_json)
 
-        # TODO: In the process of moving the rest of the logic below to two separate endpoints, that will be called by conversation widget/viewmodel
-
-        # wav_bytes_io = convert_audio_sample_rate(
-        #     local_tmp_file_path, sample_rate=16000)
-
-        # transcribe_api_url = f"{os.getenv('TRANSCRIBE_API_URL')}/transcribe"
-        # transcribe_api_response = requests.post(
-        #     transcribe_api_url, files={"file": ("audio.wav", wav_bytes_io, "audio/wav")})
-        # transcribe_api_response.raise_for_status()
-        # transcribe_api_data = transcribe_api_response.json()
-
-        # # TODO: Overlap whisper and pyannote timestamps to get the start and end of each speaker's turn
-
-        # # merged transcript and speaker segments (start, end, text, speaker)
-        # merged_segments = []
-        # merged_segments_string = ""
-        # for segment in transcribe_api_data["transcript"]["segments"]:
-        #     merged_segments.append({
-        #         "start": segment.get("start"),
-        #         "end": segment.get("end"),
-        #         "text": segment.get("text"),
-        #         "speaker": "Speaker 1"
-        #     })
-        #     merged_segments_string += f"{segment.get('speaker')}: {segment.get('text')}\n"
-
-        # conversation_doc_ref.update({
-        #     "transcriptRaw": transcribe_api_data["transcript"]["text"],
-        #     # list of transcript segments (start, end, text)
-        #     "transcriptSegments": transcribe_api_data["transcript"]["segments"],
-        #     # list of speaker segments (start, end, speaker)
-        #     "speakerSegments": transcribe_api_data["speakers"],
-        #     "transcript": merged_segments,
-        #     "language": transcribe_api_data["transcript"]["language"]
-        # })
-
-        # llm_client = LLMClient().client
-
-        # llm_response = llm_client.generate(
-        #     model=os.getenv("LLM_MODEL"),
-        #     stream=False,
-        #     system=(
-        #         "You are a summarization assistant. You will receive a full conversation transcript "
-        #         "and must return: (1) a concise header, and (2) a brief summary.\n\n"
-
-        #         "HEADER:\n"
-        #         "- No more than 5 words.\n"
-
-        #         "SUMMARY:\n"
-        #         "- No more than 100 words.\n"
-        #         "- Include bullet points for key insights and action items.\n"
-        #         "- Must NOT repeat the header.\n\n"
-
-        #         "MARKDOWN SUMMARY (summaryMarkdown):\n"
-        #         "- Output the same content as `summary`, but in Markdown format.\n"
-        #         "- Use **bold** for section labels instead of Markdown headers and ensure spacing between sections.\n"
-        #         "- Do NOT include any content outside the JSON schema.\n\n"
-
-        #         "Your entire output MUST strictly follow the JSON schema. "
-        #         "Do not output anything other than valid JSON."
-        #     ),
-        #     prompt=merged_segments_string,
-        #     format={
-        #         "type": "object",
-        #         "properties": {
-        #             "header": {"type": "string"},
-        #             "summary": {"type": "string"},
-        #             "summaryMarkdown": {"type": "string"}
-        #         },
-        #         "required": ["header", "summary", "summaryMarkdown"]
-        #     }
-        # )
-
-        # llm_api_response_json = json.loads(llm_response["response"])
-
-        # conversation_doc_ref.update({
-        #     "header": llm_api_response_json["header"],
-        #     # raw summary text
-        #     "summaryRaw": llm_api_response_json["summary"],
-        #     # summary text in markdown format
-        #     "summary": llm_api_response_json["summaryMarkdown"],
-        #     "status": "completed"
-        # })
-
-        # vector_db_client = VectorDBClient()
-        # vector_db_client.upload_documents([{
-        #     "content": merged_segments_string,
-        #     "type": "conversation_transcript",
-        #     "userId": user_uid,
-        #     "customerId": customer_id,
-        # }])
-
-        # response_doc = conversation_doc_ref.get(field_paths=[
-        #                                         "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript"])
-        # response_dict = response_doc.to_dict()
-
-        # response_dict["createdAt"] = response_doc.get(
-        #     "createdAt").isoformat()
-
-        # response_dict["id"] = conversation_id
-
-        # delete_tmp_file(local_tmp_file_path)
-
-        # return jsonify(response_dict), 201
-
         return jsonify({"id": conversation_id}), 201
     except Exception as e:
         conversation_doc_ref.delete()
@@ -409,9 +305,6 @@ def create_conversation(customer_id):
         return jsonify({"error": str(e)}), 500
 
 
-# TODO: Update this function prior to using it for streaming transcription.
-# Currently it is not used, but will be used for conversation screen to display
-# transcription in real-time.
 @app.post("/customers/<customer_id>/conversations/<conversation_id>/transcribe")
 @login_required
 def transcribe_conversation(customer_id, conversation_id):
@@ -477,9 +370,6 @@ def transcribe_conversation(customer_id, conversation_id):
         return jsonify({"error": str(e)}), 500
 
 
-# TODO: Update this function prior to using it for streaming summary generation.
-# Currently it is not used, but will be used for conversation screen to display
-# summarygeneration in real-time.
 @app.post("/customers/<customer_id>/conversations/<conversation_id>/summarize")
 @login_required
 def summarize_conversation(customer_id, conversation_id):
@@ -565,7 +455,7 @@ def summarize_conversation(customer_id, conversation_id):
 
         response_dict["id"] = conversation_id
 
-        return jsonify(response_dict), 201
+        return jsonify(response_dict), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
