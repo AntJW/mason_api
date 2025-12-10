@@ -446,6 +446,8 @@ def summarize_conversation(customer_id, conversation_id):
 
         conversation_doc_ref.update({
             "header": llm_api_response_json["header"],
+            # plain text summary
+            "summaryRaw": llm_api_response_json["summary"],
             # summary text in quill delta format
             "summary": summary_delta,
             "status": "summarized"
@@ -522,13 +524,46 @@ def update_conversation_summary(customer_id, conversation_id):
         user_uid = user.get("uid")
         request_data = request.get_json()
         summary = request_data.get("summary")
+        summary_raw = request_data.get("summaryPlainText")
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
         conversation_doc_ref = firestore_client.collection(
             "conversations").document(conversation_id)
 
+        print(summary_raw)
+
         conversation_doc_ref.update({
             "summary": summary,
+            "summaryRaw": summary_raw,
+        })
+
+        conversation_doc = conversation_doc_ref.get(field_paths=[
+                                                    "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript", "status"])
+        conversation_json = conversation_doc.to_dict()
+        conversation_json["id"] = conversation_doc_ref.id
+        conversation_json["createdAt"] = conversation_doc.get(
+            "createdAt").isoformat()
+
+        return jsonify(conversation_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.put("/customers/<customer_id>/conversations/<conversation_id>/header/update")
+@login_required
+def update_conversation_header(customer_id, conversation_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        request_data = request.get_json()
+        header = request_data.get("header")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        conversation_doc_ref = firestore_client.collection(
+            "conversations").document(conversation_id)
+        conversation_doc_ref.update({
+            "header": header
         })
 
         conversation_doc = conversation_doc_ref.get(field_paths=[
