@@ -24,7 +24,7 @@ import json
 from vector_db_client import VectorDBClient
 from qdrant_client import models
 from llm_client import LLMClient
-
+from markdown_to_delta import convert_markdown_to_delta
 
 initialize_app(
     options={"storageBucket": f"{PROJECT_ID.value}.firebasestorage.app"})
@@ -441,12 +441,13 @@ def summarize_conversation(customer_id, conversation_id):
 
         llm_api_response_json = json.loads(llm_response["response"])
 
+        summary_delta = convert_markdown_to_delta(
+            llm_api_response_json["summaryMarkdown"])
+
         conversation_doc_ref.update({
             "header": llm_api_response_json["header"],
-            # raw summary text
-            "summaryRaw": llm_api_response_json["summary"],
-            # summary text in markdown format
-            "summary": llm_api_response_json["summaryMarkdown"],
+            # summary text in quill delta format
+            "summary": summary_delta,
             "status": "summarized"
         })
 
@@ -508,6 +509,36 @@ def get_conversations(customer_id):
 
             conversations_list.append(conversation_json)
         return jsonify(conversations_list), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.put("/customers/<customer_id>/conversations/<conversation_id>/summary/update")
+@login_required
+def update_conversation_summary(customer_id, conversation_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        request_data = request.get_json()
+        summary = request_data.get("summary")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        conversation_doc_ref = firestore_client.collection(
+            "conversations").document(conversation_id)
+
+        conversation_doc_ref.update({
+            "summary": summary,
+        })
+
+        conversation_doc = conversation_doc_ref.get(field_paths=[
+                                                    "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript", "status"])
+        conversation_json = conversation_doc.to_dict()
+        conversation_json["id"] = conversation_doc_ref.id
+        conversation_json["createdAt"] = conversation_doc.get(
+            "createdAt").isoformat()
+
+        return jsonify(conversation_json), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
