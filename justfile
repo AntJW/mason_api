@@ -39,8 +39,7 @@ deploy-transcribe-api:
     --concurrency 1 \
     --cpu 4 \
     --set-env-vars OLLAMA_NUM_PARALLEL=1 \
-    --min-instances 1 \
-    --max-instances 2 \
+    --max-instances 1 \
     --memory 16Gi \
     --no-cpu-throttling \
     --allow-unauthenticated \
@@ -63,8 +62,7 @@ deploy-llm-api:
     --concurrency 1 \
     --cpu 4 \
     --set-env-vars OLLAMA_NUM_PARALLEL=1 \
-    --min-instances 1 \
-    --max-instances 2 \
+    --max-instances 1 \
     --memory 16Gi \
     --no-cpu-throttling \
     --allow-unauthenticated \
