@@ -16,7 +16,7 @@ from logger import logger
 from datetime import datetime, UTC, timezone
 from google.cloud.firestore_v1.field_path import FieldPath
 from firebase_functions.params import PROJECT_ID
-from utility import is_valid_email, convert_audio_sample_rate, save_file_to_tmp, upload_to_storage, delete_tmp_file, download_from_storage
+from utility import is_valid_email, convert_audio_sample_rate, save_file_to_tmp, upload_to_storage, delete_tmp_file, download_from_storage, delete_from_storage
 from enum import Enum
 import uuid
 import requests
@@ -265,6 +265,33 @@ def update_customer(customer_id):
         return jsonify(customer_json), 200
     except Exception as e:
         logger.error(f"error: {e}")
+
+
+@app.delete("/customers/<customer_id>/delete")
+@login_required
+def delete_customer(customer_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        conversations_docs = firestore_client.collection(
+            "conversations").where(filter=FieldFilter("customerId", "==", customer_id)).get()
+
+        for conversation_doc in conversations_docs:
+            conversation_audio_storage_path = conversation_doc.get(
+                "audioStoragePath")
+            delete_from_storage(conversation_audio_storage_path)
+            conversation_doc.delete()
+
+        customer_doc_ref = firestore_client.collection(
+            "customers").document(customer_id)
+
+        customer_doc_ref.delete()
+        return jsonify({}), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.post("/customers/<customer_id>/conversations/create")
@@ -574,6 +601,29 @@ def update_conversation_header(customer_id, conversation_id):
             "createdAt").isoformat()
 
         return jsonify(conversation_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.delete("/customers/<customer_id>/conversations/<conversation_id>/delete")
+@login_required
+def delete_conversation(customer_id, conversation_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        conversation_doc_ref = firestore_client.collection(
+            "conversations").document(conversation_id)
+        conversation_doc = conversation_doc_ref.get(
+            field_paths=["audioStoragePath"])
+        audio_storage_path = conversation_doc.get("audioStoragePath")
+
+        delete_from_storage(audio_storage_path)
+
+        conversation_doc_ref.delete()
+
+        return jsonify({}), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
