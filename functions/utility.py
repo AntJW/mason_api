@@ -93,6 +93,15 @@ def download_from_storage(storage_file_path) -> str:
         raise e
 
 
+def delete_from_storage(storage_file_path):
+    try:
+        bucket = storage.bucket()
+        blob = bucket.blob(storage_file_path)
+        blob.delete()
+    except Exception as e:
+        raise e
+
+
 def save_file_to_tmp(file: FileStorage) -> str:
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
         file.save(tmp.name)
