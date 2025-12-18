@@ -75,7 +75,7 @@ gcloud run deploy $SERVICE_NAME \
     --gpu-type nvidia-l4 \
     --no-gpu-zonal-redundancy \
     --concurrency 1 \
-    --cpu 4 \
+    --cpu 8 \
     --set-env-vars OLLAMA_NUM_PARALLEL=1 \
     --max-instances 3 \
     --memory 16Gi \
@@ -198,9 +198,9 @@ gcloud run deploy $SERVICE_NAME \
     --image $IMAGE_URL \
     --project $PROJECT_ID \
     --region us-central1 \
-    --concurrency 10 \
+    --concurrency 3 \
     --cpu 4 \
-    --max-instances 3 \
+    --max-instances 1 \
     --memory 16Gi \
     --no-cpu-throttling \
     --allow-unauthenticated \
@@ -243,9 +243,9 @@ gcloud run deploy $SERVICE_NAME \
     --image $IMAGE_URL \
     --project $PROJECT_ID \
     --region us-central1 \
-    --concurrency 10 \
+    --concurrency 3 \
     --cpu 4 \
-    --max-instances 3 \
+    --max-instances 1 \
     --memory 16Gi \
     --no-cpu-throttling \
     --allow-unauthenticated \
