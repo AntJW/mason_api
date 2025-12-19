@@ -84,7 +84,6 @@ gcloud run deploy $SERVICE_NAME \
     --port 11434 \
     --timeout=600
 
-# TODO: Remove --allow-unauthenticated once auth is updated and ready for production. 
 ```
 ```bash
 # Example requests for LLM API / models
@@ -252,3 +251,6 @@ gcloud run deploy $SERVICE_NAME \
     --port 11434 \
     --timeout=600 
 ```
+
+## TODO
+* Remove --allow-unauthenticated from cloud run deploy once auth is updated and ready for production. 
