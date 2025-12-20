@@ -76,7 +76,7 @@ def get_hello_world():
 # Adds additional new user properties to firestore database that are not able to be stored in Firebase Authentication.
 @app.post("/users/me/properties")
 @login_required
-def create_new_user_properties():
+def create_new_user_properties_me():
     try:
         user = request.user
         user_uid = user.get("uid")
@@ -116,6 +116,54 @@ def create_new_user_properties():
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.get("/users/me")
+@login_required
+def get_user_me():
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        user_doc = firestore_client.collection(
+            "users").document(user_uid).get()
+        user_json = user_doc.to_dict()
+        user_json["createdAt"] = user_doc.get("createdAt").isoformat()
+        user_json["id"] = user_uid
+        return jsonify(user_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.put("/users/me")
+@login_required
+def update_user_me():
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        request_data = request.get_json()
+        firstName = request_data.get("firstName")
+        lastName = request_data.get("lastName")
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        user_doc = firestore_client.collection(
+            "users").document(user_uid)
+        user_doc.update({
+            "firstName": firstName,
+            "lastName": lastName
+        })
+
+        display_name = f"{firstName} {lastName}"
+        auth.update_user(user_uid, display_name=display_name)
+
+        user_snapshot = user_doc.get(field_paths=["displayName", "email",
+                                                  "firstName", "lastName", "createdAt"])
+        user_json = user_snapshot.to_dict()
+        user_json["createdAt"] = user_json.get("createdAt").isoformat()
+        user_json["id"] = user_doc.id
+        return jsonify(user_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
 
 
 @app.get("/customers/<customer_id>")
