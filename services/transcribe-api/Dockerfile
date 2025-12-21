@@ -28,8 +28,15 @@ COPY app.py requirements.txt ./
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
+# Pre-download Whisper model
+RUN python3 -c "import whisper; whisper.load_model('turbo', device='cpu')"
+
+# Pre-download PyAnnote pipeline (uses BuildKit secret for HuggingFace token)
+RUN --mount=type=secret,id=HUGGINGFACE_TOKEN \
+    python3 -c "from pyannote.audio import Pipeline; Pipeline.from_pretrained('pyannote/speaker-diarization-community-1', token=open('/run/secrets/HUGGINGFACE_TOKEN').read().strip())"
+
 # Expose port (Cloud Run will set PORT env var)
 EXPOSE 8080
 
 # Run FastAPI - use PORT env var with 8080 as fallback
-CMD python3 -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080}
+CMD ["sh", "-c", "python3 -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080}"]

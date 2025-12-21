@@ -1,12 +1,13 @@
 FROM docker.io/ollama/ollama:latest AS ollama
 
-FROM cgr.dev/chainguard/wolfi-base
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
 
-RUN apk add --no-cache libstdc++
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ollama /usr/bin/ollama /usr/bin/ollama
-COPY --from=ollama /usr/lib/ollama/libggml-cpu-* /usr/lib/ollama/
-COPY --from=ollama /usr/lib/ollama/libggml-base.so /usr/lib/ollama/libggml-base.so
+COPY --from=ollama /usr/lib/ollama/ /usr/lib/ollama/
 
 # Environment variable setup
 ENV OLLAMA_HOST=0.0.0.0
