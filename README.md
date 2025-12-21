@@ -123,7 +123,7 @@ cd services/$SERVICE_NAME
 
 # Build docker image locally before pushing it to Artifact Repository. Greatly reduces Cloud Build cost (associated with $gcloud build submit).
 
-docker build --platform=linux/amd64 -t $IMAGE_URL .
+DOCKER_BUILDKIT=1 docker build --platform=linux/amd64 --secret id=HUGGINGFACE_TOKEN,src=.hf_token -t $IMAGE_URL .
 
 docker push $IMAGE_URL
 
@@ -136,10 +136,10 @@ gcloud run deploy $SERVICE_NAME \
     --gpu-type nvidia-l4 \
     --no-gpu-zonal-redundancy \
     --concurrency 1 \
-    --cpu 4 \
+    --cpu 8 \
     --set-env-vars OLLAMA_NUM_PARALLEL=1 \
     --max-instances 3 \
-    --memory 16Gi \
+    --memory 32Gi \
     --no-cpu-throttling \
     --allow-unauthenticated \
     --port 8080 \

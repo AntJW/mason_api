@@ -27,9 +27,9 @@ async def load_models_background():
             "turbo", device="cuda")  # GPU by default
 
         print("Loading PyAnnote pipeline...")
-        # Use HuggingFace API token or local model
+        # Model is pre-cached in Docker image, token not needed at runtime
         pyannote_pipeline = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization-community-1", token=os.getenv("HUGGINGFACE_TOKEN"))
+            "pyannote/speaker-diarization-community-1")
 
         # send pipeline to GPU (when available)
         pyannote_pipeline.to(torch.device("cuda"))

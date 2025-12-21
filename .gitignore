@@ -82,3 +82,6 @@ venv/
 
 VS Code settings
 .vscode/
+
+# HuggingFace token
+.hf_token
