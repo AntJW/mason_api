@@ -431,13 +431,13 @@ def transcribe_conversation(customer_id, conversation_id):
             })
             merged_segments_string += f"{speaker}: {segment.get('text')}\n"
 
-        # vector_db_client = VectorDBClient()
-        # vector_db_client.upload_documents([{
-        #     "content": merged_segments_string,
-        #     "type": "conversation_transcript",
-        #     "userId": user_uid,
-        #     "customerId": customer_id,
-        # }])
+        vector_db_client = VectorDBClient()
+        vector_db_client.upload_documents([{
+            "content": merged_segments_string,
+            "type": "conversation_transcript",
+            "userId": user_uid,
+            "customerId": customer_id,
+        }])
 
         conversation_doc_ref.update({
             "transcriptRaw": transcribe_api_data["transcript"]["text"],
