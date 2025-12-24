@@ -83,7 +83,8 @@ async def transcribe_audio(file: UploadFile):
             audio_path = tmp.name
 
         # 1. Whisper transcription
-        transcription_result = whisper_model.transcribe(audio_path, fp16=True)
+        transcription_result = whisper_model.transcribe(
+            audio_path, word_timestamps=True, fp16=True)
 
         # 2. PyAnnote speaker diarization
         diarization = pyannote_pipeline(audio_path)
