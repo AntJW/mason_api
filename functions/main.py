@@ -16,7 +16,7 @@ from logger import logger
 from datetime import datetime, UTC, timezone
 from google.cloud.firestore_v1.field_path import FieldPath
 from firebase_functions.params import PROJECT_ID
-from utility import is_valid_email, convert_audio_sample_rate, save_file_to_tmp, upload_to_storage, delete_tmp_file, download_from_storage, delete_from_storage
+from utility import is_valid_email, convert_audio_sample_rate, save_file_to_tmp, upload_to_storage, delete_tmp_file, download_from_storage, delete_from_storage, find_speaker_optimized
 from enum import Enum
 import uuid
 import requests
@@ -410,10 +410,23 @@ def transcribe_conversation(customer_id, conversation_id):
             f"{os.getenv('TRANSCRIBE_API_URL')}/transcribe", files={"file": ("audio.wav", wav_bytes_io, "audio/wav")})
 
         transcribe_api_response.raise_for_status()
-
         transcribe_api_data = transcribe_api_response.json()
 
         # TODO: Overlap whisper and pyannote timestamps to get the start and end of each speaker's turn
+
+        diarization_segments = transcribe_api_data["speakers"]
+        diarization_segments.sort(key=lambda x: x["start"])
+        diarization_start_times = [segment["start"]
+                                   for segment in diarization_segments]
+
+        for segment in transcribe_api_data["transcript"]["segments"]:
+            for word_info in segment.get("words", []):
+                speaker = find_speaker_optimized(
+                    word_info["start"],
+                    word_info["end"],
+                    diarization_segments,
+                    diarization_start_times
+                )
 
         # merged transcript and speaker segments (start, end, text, speaker)
         merged_segments = []
@@ -430,6 +443,20 @@ def transcribe_conversation(customer_id, conversation_id):
                 "speaker": speaker
             })
             merged_segments_string += f"{speaker}: {segment.get('text')}\n"
+
+          # # Combine pyannote timestamps that are consecutive with the same speaker.
+        # cleaned_speaker_segments = []
+        # for segment in transcribe_api_data["speakers"]:
+        #     if cleaned_speaker_segments and segment["speaker"] == cleaned_speaker_segments[-1]["speaker"]:
+        #         # Same speaker as previous - update the end time of the last segment
+        #         cleaned_speaker_segments[-1]["end"] = segment["end"]
+        #     else:
+        #         # New speaker - append a new segment
+        #         cleaned_speaker_segments.append({
+        #             "start": segment["start"],
+        #             "end": segment["end"],
+        #             "speaker": segment["speaker"]
+        #         })
 
         vector_db_client = VectorDBClient()
         vector_db_client.upload_documents([{
