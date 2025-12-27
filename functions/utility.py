@@ -121,7 +121,7 @@ def find_speaker_optimized(word_start, word_end, segments, start_times):
     idx = bisect.bisect_right(start_times, word_start) - 1
 
     max_overlap = 0
-    assigned_speaker = "UNKNOWN"
+    assigned_speaker = "Unknown"
 
     # Only check segments that could possibly overlap
     # Start from idx and look forward until segments start after word_end
