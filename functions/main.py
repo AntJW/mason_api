@@ -452,22 +452,6 @@ def transcribe_conversation(customer_id, conversation_id):
             for segment in merged_segments
         )
 
-        # # merged transcript and speaker segments (start, end, text, speaker)
-        # merged_segments = []
-        # merged_segments_string = ""
-        # for segment in transcribe_api_data["transcript"]["segments"]:
-        #     # TODO: After overlapping timestamps, we need to assign the correct
-        #     # speaker to each segment using segment["speaker"] instead of the
-        #     # hardcoded "Speaker 1".
-        #     speaker = "Speaker 1"
-        #     merged_segments.append({
-        #         "start": segment["start"],
-        #         "end": segment["end"],
-        #         "text": segment["text"],
-        #         "speaker": speaker
-        #     })
-        #     merged_segments_string += f"{speaker}: {segment.get('text')}\n"
-
         vector_db_client = VectorDBClient()
         vector_db_client.upload_documents([{
             "content": merged_segments_string,
