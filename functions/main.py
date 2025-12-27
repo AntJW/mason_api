@@ -25,6 +25,7 @@ from vector_db_client import VectorDBClient
 from qdrant_client import models
 from llm_client import LLMClient
 from markdown_to_delta import convert_markdown_to_delta
+from itertools import chain
 
 initialize_app(
     options={"storageBucket": f"{PROJECT_ID.value}.firebasestorage.app"})
@@ -419,44 +420,53 @@ def transcribe_conversation(customer_id, conversation_id):
         diarization_start_times = [segment["start"]
                                    for segment in diarization_segments]
 
-        for segment in transcribe_api_data["transcript"]["segments"]:
-            for word_info in segment.get("words", []):
-                speaker = find_speaker_optimized(
-                    word_info["start"],
-                    word_info["end"],
-                    diarization_segments,
-                    diarization_start_times
-                )
+        all_transcript_words = chain.from_iterable(
+            segment.get("words", [])
+            for segment in transcribe_api_data["transcript"]["segments"]
+        )
 
-        # merged transcript and speaker segments (start, end, text, speaker)
         merged_segments = []
         merged_segments_string = ""
-        for segment in transcribe_api_data["transcript"]["segments"]:
-            # TODO: After overlapping timestamps, we need to assign the correct
-            # speaker to each segment using segment["speaker"] instead of the
-            # hardcoded "Speaker 1".
-            speaker = "Speaker 1"
-            merged_segments.append({
-                "start": segment["start"],
-                "end": segment["end"],
-                "text": segment["text"],
-                "speaker": speaker
-            })
-            merged_segments_string += f"{speaker}: {segment.get('text')}\n"
+        for word_info in all_transcript_words:
+            speaker = find_speaker_optimized(
+                word_info["start"],
+                word_info["end"],
+                diarization_segments,
+                diarization_start_times
+            )
+            if merged_segments and speaker == merged_segments[-1]["speaker"]:
+                # Same speaker as previous - update the end time of the last segment
+                merged_segments[-1]["end"] = word_info["end"]
+                merged_segments[-1]["text"] += f"{word_info['word']}"
+            else:
+                # New speaker - append a new segment
+                merged_segments.append({
+                    "start": word_info["start"],
+                    "end": word_info["end"],
+                    "speaker": speaker,
+                    "text": word_info["word"]
+                })
 
-          # # Combine pyannote timestamps that are consecutive with the same speaker.
-        # cleaned_speaker_segments = []
-        # for segment in transcribe_api_data["speakers"]:
-        #     if cleaned_speaker_segments and segment["speaker"] == cleaned_speaker_segments[-1]["speaker"]:
-        #         # Same speaker as previous - update the end time of the last segment
-        #         cleaned_speaker_segments[-1]["end"] = segment["end"]
-        #     else:
-        #         # New speaker - append a new segment
-        #         cleaned_speaker_segments.append({
-        #             "start": segment["start"],
-        #             "end": segment["end"],
-        #             "speaker": segment["speaker"]
-        #         })
+        merged_segments_string = "\n".join(
+            f"{segment['speaker']}: {segment['text']}"
+            for segment in merged_segments
+        )
+
+        # # merged transcript and speaker segments (start, end, text, speaker)
+        # merged_segments = []
+        # merged_segments_string = ""
+        # for segment in transcribe_api_data["transcript"]["segments"]:
+        #     # TODO: After overlapping timestamps, we need to assign the correct
+        #     # speaker to each segment using segment["speaker"] instead of the
+        #     # hardcoded "Speaker 1".
+        #     speaker = "Speaker 1"
+        #     merged_segments.append({
+        #         "start": segment["start"],
+        #         "end": segment["end"],
+        #         "text": segment["text"],
+        #         "speaker": speaker
+        #     })
+        #     merged_segments_string += f"{speaker}: {segment.get('text')}\n"
 
         vector_db_client = VectorDBClient()
         vector_db_client.upload_documents([{
