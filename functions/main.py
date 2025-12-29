@@ -435,7 +435,7 @@ def transcribe_conversation(customer_id, conversation_id):
                     "start": word_info["start"],
                     "end": word_info["end"],
                     "speaker": speaker,
-                    "text": word_info["word"]
+                    "text": word_info["word"].lstrip()
                 })
 
         merged_segments_string = "\n".join(
@@ -492,10 +492,7 @@ def summarize_conversation(customer_id, conversation_id):
         transcript = conversation_doc.get("transcript")
         merged_segments_string = ""
         for segment in transcript:
-            # TODO: After overlapping timestamps in the transcribe function,
-            # we need to assign the correct speaker to each segment by
-            # using segment.get('speaker') instead of the hardcoded "Speaker 1".
-            merged_segments_string += f"Speaker 1: {segment.get('text')}\n"
+            merged_segments_string += f"{segment.get('speaker')}: {segment.get('text')}\n"
 
         llm_client = LLMClient().client
 
@@ -506,11 +503,12 @@ def summarize_conversation(customer_id, conversation_id):
                 "You are a summarization assistant.\n\n"
                 "Provide:\n"
                 "1. header: 2-5 word title\n"
-                "2. summaryPlain: Plain text summary (no formatting, max 100 words)\n"
-                "3. summaryMarkdown: Same content as summaryPlain but formatted with markdown:\n"
-                "   - Use **Key Insights:** and **Action Items:** as section headers\n"
+                "2. summary: Bullet point summary (plain text, use - for bullets, max 7-10 points)\n"
+                "   - Include action items as bullet points at the end\n"
+                "3. summaryMarkdown: Same content as summary but formatted with markdown:\n"
+                "   - No markdown headers, only bold text\n"
+                "   - Include **Action Items:** as section at the end if there are any action items\n"
                 "   - Use * for bullet points\n"
-                "   - Use **bold** for section labels instead of Markdown headers\n"
                 "   - Add two newlines (blank line) between sections\n\n"
                 "Output valid JSON only."
             ),
@@ -696,17 +694,15 @@ def ai_chat(customer_id):
         user = request.user
         user_uid = user.get("uid")
         request_data = request.get_json()
-        # [{"role": "user", "content": "Hello, how are you?"}]
+        # i.e.[{"role": "user", "content": "Hello, how are you?"}, {"role": "assistant", "content": "I'm good, thank you!"}]
         messages = request_data.get("messages")
 
         vector_db_client = VectorDBClient()
 
         hits = vector_db_client.query(
-            # TODO: Fix messages coming from client. messages[0] will logically
-            # break after the first message.
-            # Currently it is sending the role assistant and empty content
-            # used as a placeholder to simulate typing in the flutter ui.
-            query=messages[0]["content"], limit=10, query_filter=models.Filter(
+            # Get the second to last message from the client, because the last message is a placeholder for the assistant's
+            # response, which is populated with the response from the LLM.
+            query=messages[-2]["content"], limit=5, query_filter=models.Filter(
                 must=[
                     models.FieldCondition(
                         key="userId", match=models.MatchValue(value=user_uid)),
