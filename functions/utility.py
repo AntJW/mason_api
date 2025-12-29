@@ -6,6 +6,7 @@ import tempfile
 from firebase_admin import storage
 import subprocess
 import bisect
+import numpy as np
 
 
 def is_valid_email(email: str) -> bool:
@@ -85,7 +86,10 @@ def upload_to_storage(local_tmp_file_path, storage_file_path, make_public: bool 
 
 def download_from_storage(storage_file_path) -> str:
     try:
-        local_tmp_file_path = tempfile.NamedTemporaryFile(delete=False).name
+        # Get the original file extension
+        _, ext = os.path.splitext(storage_file_path)
+        local_tmp_file_path = tempfile.NamedTemporaryFile(
+            delete=False, suffix=ext).name
         bucket = storage.bucket()
         blob = bucket.blob(storage_file_path)
         blob.download_to_filename(local_tmp_file_path)
@@ -112,35 +116,3 @@ def save_file_to_tmp(file: FileStorage) -> str:
 
 def delete_tmp_file(tmp_path: str):
     os.remove(tmp_path)
-
-
-def find_speaker_optimized(word_start, word_end, segments, start_times):
-    """Find speaker using binary search - O(log n) instead of O(n)."""
-
-    # Find the rightmost segment that starts before or at word_start
-    idx = bisect.bisect_right(start_times, word_start) - 1
-
-    max_overlap = 0
-    assigned_speaker = "Unknown"
-
-    # Only check segments that could possibly overlap
-    # Start from idx and look forward until segments start after word_end
-    while idx < len(segments) and segments[idx]['start'] < word_end:
-        segment = segments[idx]
-
-        # Calculate overlap
-        overlap_start = max(word_start, segment['start'])
-        overlap_end = min(word_end, segment['end'])
-        overlap = max(0, overlap_end - overlap_start)
-
-        if overlap > max_overlap:
-            max_overlap = overlap
-            assigned_speaker = segment['speaker']
-
-        idx += 1
-
-        # Early exit if segment starts after word ends
-        if idx < len(segments) and segments[idx]['start'] >= word_end:
-            break
-
-    return assigned_speaker
