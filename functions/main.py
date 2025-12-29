@@ -1,10 +1,3 @@
-# # For cost control, you can set the maximum number of containers that can be
-# # running at the same time. This helps mitigate the impact of unexpected
-# # traffic spikes by instead downgrading performance. This limit is a per-function
-# # limit. You can override the limit for each function using the max_instances
-# # parameter in the decorator, e.g. @https_fn.on_request(max_instances=5).
-# set_global_options(max_instances=10)
-
 from firebase_admin import initialize_app, firestore, auth
 from firebase_functions import https_fn, options
 from flask import Flask, request, jsonify, Response, stream_with_context
@@ -16,7 +9,7 @@ from logger import logger
 from datetime import datetime, UTC, timezone
 from google.cloud.firestore_v1.field_path import FieldPath
 from firebase_functions.params import PROJECT_ID
-from utility import is_valid_email, convert_audio_sample_rate, save_file_to_tmp, upload_to_storage, delete_tmp_file, download_from_storage, delete_from_storage, find_speaker_optimized
+from utility import is_valid_email, convert_audio_sample_rate, save_file_to_tmp, upload_to_storage, delete_tmp_file, download_from_storage, delete_from_storage
 from enum import Enum
 import uuid
 import requests
@@ -26,6 +19,7 @@ from qdrant_client import models
 from llm_client import LLMClient
 from markdown_to_delta import convert_markdown_to_delta
 from itertools import chain
+from fn_impl.transcribe_fn import find_speaker_optimized
 
 initialize_app(
     options={"storageBucket": f"{PROJECT_ID.value}.firebasestorage.app"})
