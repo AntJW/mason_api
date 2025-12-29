@@ -104,13 +104,9 @@ def find_speaker_optimized(word_start, word_end, segments, start_times):
         overlap_end = min(word_end, segment['end'])
         overlap = max(0, overlap_end - overlap_start)
 
-        # Convert "SPEAKER_00" to "SPEAKER 0", etc.
-        speaker_num = segment['speaker'].split("_")[-1]
-        speaker = f"SPEAKER {int(speaker_num)}"
-
         if overlap > max_overlap:
             max_overlap = overlap
-            assigned_speaker = speaker
+            assigned_speaker = segment['speaker']
 
         idx += 1
 
