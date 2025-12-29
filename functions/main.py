@@ -9,7 +9,7 @@ from logger import logger
 from datetime import datetime, UTC, timezone
 from google.cloud.firestore_v1.field_path import FieldPath
 from firebase_functions.params import PROJECT_ID
-from utility import is_valid_email, convert_audio_sample_rate, save_file_to_tmp, upload_to_storage, delete_tmp_file, download_from_storage, delete_from_storage
+from utility import is_valid_email, convert_audio_sample_rate, save_file_to_tmp, upload_to_storage, delete_tmp_file, download_from_storage, delete_from_storage, find_speaker_optimized
 from enum import Enum
 import uuid
 import requests
@@ -19,7 +19,6 @@ from qdrant_client import models
 from llm_client import LLMClient
 from markdown_to_delta import convert_markdown_to_delta
 from itertools import chain
-from fn_impl.transcribe_fn import find_speaker_optimized
 
 initialize_app(
     options={"storageBucket": f"{PROJECT_ID.value}.firebasestorage.app"})

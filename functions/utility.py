@@ -116,3 +116,46 @@ def save_file_to_tmp(file: FileStorage) -> str:
 
 def delete_tmp_file(tmp_path: str):
     os.remove(tmp_path)
+
+
+def find_speaker_optimized(word_start, word_end, segments, start_times):
+    """
+    Find speaker using binary search - O(log n) instead of O(n).
+
+    Args:
+        word_start (float): The start time of the word.
+        word_end (float): The end time of the word.
+        segments (list): The list of segments.
+        start_times (list): The list of start times.
+
+    Returns:
+        str: The speaker for the word.
+    """
+
+    # Find the rightmost segment that starts before or at word_start
+    idx = max(0, bisect.bisect_right(start_times, word_start) - 1)
+
+    max_overlap = 0
+    assigned_speaker = "UNKNOWN"
+
+    # Only check segments that could possibly overlap
+    # Start from idx and look forward until segments start after word_end
+    while idx < len(segments) and segments[idx]['start'] < word_end:
+        segment = segments[idx]
+
+        # Calculate overlap
+        overlap_start = max(word_start, segment['start'])
+        overlap_end = min(word_end, segment['end'])
+        overlap = max(0, overlap_end - overlap_start)
+
+        if overlap > max_overlap:
+            max_overlap = overlap
+            assigned_speaker = segment['speaker']
+
+        idx += 1
+
+        # Early exit if segment starts after word ends
+        if idx < len(segments) and segments[idx]['start'] >= word_end:
+            break
+
+    return assigned_speaker
