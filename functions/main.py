@@ -406,8 +406,6 @@ def transcribe_conversation(customer_id, conversation_id):
         transcribe_api_response.raise_for_status()
         transcribe_api_data = transcribe_api_response.json()
 
-        # TODO: Overlap whisper and pyannote timestamps to get the start and end of each speaker's turn
-
         diarization_segments = transcribe_api_data["speakers"]
         diarization_segments.sort(key=lambda x: x["start"])
         diarization_start_times = [segment["start"]
