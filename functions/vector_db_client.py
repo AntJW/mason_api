@@ -19,7 +19,8 @@ class Document(BaseModel):
 class VectorDBClient:
     def __init__(self):
         self._url = os.getenv("VECTOR_DB_URL")
-        self._client = QdrantClient(url=self._url)
+        self._api_key = os.getenv("VECTOR_DB_API_KEY")
+        self._client = QdrantClient(url=self._url, api_key=self._api_key)
         self._collection_name = os.getenv("VECTOR_DB_COLLECTION")
 
     def upload_documents(self, documents: list[dict]):
