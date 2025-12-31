@@ -1,6 +1,6 @@
 from qdrant_client import models, QdrantClient
 from qdrant_client.conversions.common_types import Filter
-from embeddings_client import EmbeddingsAPIClient
+from clients.embeddings_client import EmbeddingsAPIClient
 import os
 from pydantic import BaseModel
 from typing import Literal, Optional
