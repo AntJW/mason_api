@@ -14,9 +14,9 @@ from enum import Enum
 import uuid
 import requests
 import json
-from vector_db_client import VectorDBClient
+from clients.vector_db_client import VectorDBClient
 from qdrant_client import models
-from llm_client import LLMClient
+from clients.llm_client import LLMClient
 from markdown_to_delta import convert_markdown_to_delta
 from itertools import chain
 
