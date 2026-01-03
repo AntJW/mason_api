@@ -538,6 +538,14 @@ def summarize_conversation(customer_id, conversation_id):
             "status": "summarized"
         })
 
+        vector_db_client = VectorDBClient()
+        vector_db_client.upload_documents([{
+            "content": llm_api_response_json["summary"],
+            "type": "conversation_summary",
+            "userId": user_uid,
+            "customerId": customer_id,
+        }])
+
         response_doc = conversation_doc_ref.get(field_paths=[
                                                 "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript", "status"])
         response_dict = response_doc.to_dict()
