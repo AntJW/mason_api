@@ -563,6 +563,7 @@ def summarize_conversation(customer_id, conversation_id):
 @login_required
 def get_conversation(customer_id, conversation_id):
     try:
+        print("here =" * 100)
         firestore_client: google.cloud.firestore.Client = firestore.client()
         conversation_doc_ref = firestore_client.collection(
             "conversations").document(conversation_id)
@@ -870,6 +871,147 @@ def vector_db_test():
         # ))
 
         return jsonify({"message": "Done!"}), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/customers/<customer_id>/documents/create")
+@login_required
+def create_document(customer_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        request_data = request.get_json()
+        document_name = request_data.get("name")
+        text = request_data.get("text")
+        plain_text = request_data.get("plainText")
+        source_template_id = request_data.get("sourceTemplateId", None)
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        document_doc_ref = firestore_client.collection(
+            "documents").document()
+        document_id = document_doc_ref.id
+
+        document_json = {
+            "name": document_name,
+            "text": text,
+            "plainText": plain_text,
+            "sourceTemplateId": source_template_id,
+            "customerId": customer_id,
+            "createdAt": SERVER_TIMESTAMP
+        }
+
+        document_doc_ref.set(document_json)
+
+        document_doc = document_doc_ref.get(field_paths=[
+            "name", "text", "plainText", "sourceTemplateId", "customerId", "createdAt"])
+        document_json = document_doc.to_dict()
+        document_json["id"] = document_id
+        document_json["createdAt"] = document_doc.get(
+            "createdAt").isoformat()
+
+        return jsonify(document_json), 201
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/customers/<customer_id>/documents")
+@login_required
+def get_documents(customer_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        documents_docs = firestore_client.collection(
+            "documents").where(filter=FieldFilter("customerId", "==", customer_id)).get()
+
+        documents_list = []
+        for document_doc in documents_docs:
+            document_json = document_doc.to_dict()
+            documents_list.append({
+                "id": document_doc.id,
+                "name": document_json.get("name"),
+                "text": document_json.get("text"),
+                "plainText": document_json.get("plainText"),
+                "customerId": document_json.get("customerId"),
+                "sourceTemplateId": document_json.get("sourceTemplateId", None),
+                "createdAt": document_json.get("createdAt").isoformat()
+            })
+        return jsonify(documents_list), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/customers/<customer_id>/documents/<document_id>")
+@login_required
+def get_document(customer_id, document_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        document_doc_ref = firestore_client.collection(
+            "documents").document(document_id)
+        document_doc = document_doc_ref.get(field_paths=[
+            "name", "text", "plainText", "sourceTemplateId", "customerId", "createdAt"])
+        document_json = document_doc.to_dict()
+        document_json["id"] = document_id
+        document_json["createdAt"] = document_doc.get(
+            "createdAt").isoformat()
+        return jsonify(document_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.put("/customers/<customer_id>/documents/<document_id>/update")
+@login_required
+def update_document(customer_id, document_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        request_data = request.get_json()
+        document_name = request_data.get("name")
+        text = request_data.get("text")
+        plain_text = request_data.get("plainText")
+        source_template_id = request_data.get("sourceTemplateId", None)
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        document_doc_ref = firestore_client.collection(
+            "documents").document(document_id)
+        document_doc_ref.update({
+            "name": document_name,
+            "text": text,
+            "plainText": plain_text,
+            "sourceTemplateId": source_template_id
+        })
+
+        document_doc = document_doc_ref.get(field_paths=[
+            "name", "text", "plainText", "sourceTemplateId", "customerId", "createdAt"])
+        document_json = document_doc.to_dict()
+        document_json["id"] = document_id
+        document_json["createdAt"] = document_doc.get(
+            "createdAt").isoformat()
+        return jsonify(document_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.delete("/customers/<customer_id>/documents/<document_id>/delete")
+@login_required
+def delete_document(customer_id, document_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        document_doc_ref = firestore_client.collection(
+            "documents").document(document_id)
+        document_doc_ref.delete()
+        return jsonify({}), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
