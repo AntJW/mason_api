@@ -1015,3 +1015,95 @@ def delete_document(customer_id, document_id):
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.post("/customers/<customer_id>/documents/ai/generate")
+@login_required
+def ai_generate_document_text(customer_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        request_data = request.get_json()
+        prompt = request_data.get("prompt")
+        current_text = request_data.get("currentText")
+
+        vector_db_client = VectorDBClient()
+
+        hits = vector_db_client.query(
+            # Get the second to last message from the client, because the last message is a placeholder for the assistant's
+            # response, which is populated with the response from the LLM.
+            query=prompt, limit=5, query_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="userId", match=models.MatchValue(value=user_uid)),
+                    models.FieldCondition(
+                        key="customerId", match=models.MatchValue(value=customer_id))
+                ]
+            ))
+
+        past_conversations = ""
+        for hit in hits:
+            past_conversations += f"Transcript: {hit.payload.get('content')}\n\n"
+
+        customer_doc_ref = firestore.client().collection("customers").document(
+            customer_id)
+        customer_doc = customer_doc_ref.get(
+            field_paths=["displayName", "firstName", "lastName"])
+        customer_data = customer_doc.to_dict() if customer_doc.exists else {}
+        customer_name = (
+            f"{customer_data.get('firstName', '')} {customer_data.get('lastName', '')}".strip(
+            )
+            or customer_data.get("displayName")
+        )
+
+        system_parts = [
+            "You are a document generation assistant. The user will send a prompt describing what they want in the document.",
+            "Use the context below to inform your response. Generate markdown only. Respond with valid JSON containing a single key: markdownText (the generated markdown string).",
+            "",
+            "---",
+            "Current markdown formatted document (edit or extend this; leave as-is if the user asks for something new):",
+            (current_text or "").strip() or "(No existing content)",
+            "",
+            "---",
+            "Customer this document is for:",
+            customer_name,
+        ]
+        if past_conversations:
+            system_parts.extend([
+                "",
+                "---",
+                "Relevant past conversations with this customer (use for context only):",
+                past_conversations.strip(),
+            ])
+        system_parts.extend(["", "---", "Output valid JSON only."])
+        system_message = "\n".join(system_parts)
+
+        llm_client = LLMClient().client
+
+        llm_response = llm_client.generate(
+            model=os.getenv("LLM_MODEL"),
+            stream=False,
+            system=system_message,
+            prompt=prompt,
+            format={
+                "type": "object",
+                "properties": {
+                    "markdownText": {"type": "string"},
+                },
+                "required": ["markdownText"]
+            }
+        )
+
+        llm_api_response_json = json.loads(llm_response["response"])
+
+        document_text_delta = convert_markdown_to_delta(
+            llm_api_response_json["markdownText"])
+
+        print("=" * 100)
+        print(document_text_delta)
+        print("=" * 100)
+
+        return jsonify(document_text_delta), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
