@@ -1030,8 +1030,6 @@ def ai_generate_document_text(customer_id):
         vector_db_client = VectorDBClient()
 
         hits = vector_db_client.query(
-            # Get the second to last message from the client, because the last message is a placeholder for the assistant's
-            # response, which is populated with the response from the LLM.
             query=prompt, limit=5, query_filter=models.Filter(
                 must=[
                     models.FieldCondition(
@@ -1056,15 +1054,17 @@ def ai_generate_document_text(customer_id):
             or customer_data.get("displayName")
         )
 
+        current_delta_str = json.dumps(current_text)
+
         system_parts = [
             "You are a document generation assistant. The user will send a prompt describing what they want in the document.",
-            "Use the context below to inform your response. Generate markdown only. Respond with valid JSON containing a single key: markdownText (the generated markdown string).",
+            "The current document and your response both use Quill Delta JSON format: {\"ops\": [{\"insert\": \"text\", \"attributes\": {...}}, ...]}. Preserve all existing formatting attributes (bold, italic, header, alignment, color, etc.) unless the user explicitly asks to change them.",
             "",
-            "Important: If the user asks to modify, edit, revise, or change the current document (e.g. 'fix the tone', 'add a section about X', 'rewrite paragraph 2'), apply those changes to the existing content and return the full modified document in markdownText. Do not return only the changed portion—always return the complete document. If there is no existing content or the user asks for a new document from scratch, generate accordingly.",
+            "Important: If the user asks to modify, edit, revise, or change the current document (e.g. 'fix the tone', 'add a section about X', 'rewrite paragraph 2'), apply those changes to the existing content and return the full modified document as a Delta. Do not return only the changed portion—always return the complete document. If there is no existing content or the user asks for a new document from scratch, generate accordingly.",
             "",
             "---",
-            "Current markdown formatted document (modify this when the user requests edits; otherwise extend or replace as their prompt indicates):",
-            (current_text or "").strip() or "(No existing content)",
+            "Current document in Quill Delta JSON (modify this when the user requests edits; otherwise extend or replace as their prompt indicates):",
+            current_delta_str or "(No existing content)",
             "",
             "---",
             "Customer this document is for:",
@@ -1082,30 +1082,26 @@ def ai_generate_document_text(customer_id):
 
         llm_client = LLMClient().client
 
-        llm_response = llm_client.generate(
-            model=os.getenv("LLM_MODEL"),
-            stream=False,
+        response = llm_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
             system=system_message,
-            prompt=prompt,
-            format={
-                "type": "object",
-                "properties": {
-                    "markdownText": {"type": "string"},
-                },
-                "required": ["markdownText"]
-            }
+            messages=[{"role": "user", "content": prompt}],
         )
-
-        llm_api_response_json = json.loads(llm_response["response"])
-
-        document_text_delta = convert_markdown_to_delta(
-            llm_api_response_json["markdownText"])
+        response_text = response.content[0].text
 
         print("=" * 100)
-        print(document_text_delta)
+        print("type(response_text): ", type(response_text))
+        print("response_text: ", response_text)
+
+        document_delta = json.loads(response_text)
+        print("type(document_delta): ", type(document_delta))
+        print("document_delta: ", document_delta)
+
         print("=" * 100)
 
-        return jsonify(document_text_delta), 200
+        return jsonify(document_delta), 200
+
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
