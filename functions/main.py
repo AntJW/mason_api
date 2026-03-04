@@ -1254,15 +1254,17 @@ def ai_generate_template_text():
         current_delta_str = json.dumps(current_text)
 
         system_parts = [
-            "You are a document template generation assistant. The user will send a prompt describing what they want in the document template.",
+            "You are a document template generation assistant for a contractor CRM platform. The user will send a prompt describing what they want in a reusable document template.",
+            "",
+            "Templates are used repeatedly across different customers, so they must be customer-agnostic. Use placeholder variables like {{customer_name}}, {{customer_address}}, {{customer_email}}, {{customer_phone}}, {{date}}, {{project_description}}, {{company_name}}, etc. where customer- or project-specific details would go. Never hard-code specific names, addresses, or details that would change per customer.",
+            "",
             "The current template and your response both use Quill Delta JSON format: {\"ops\": [{\"insert\": \"text\", \"attributes\": {...}}, ...]}. Preserve all existing formatting attributes (bold, italic, header, alignment, color, etc.) unless the user explicitly asks to change them.",
             "",
-            "Important: If the user asks to modify, edit, revise, or change the current template (e.g. 'fix the tone', 'add a section about X', 'rewrite paragraph 2'), apply those changes to the existing content and return the full modified template as a Delta. Do not return only the changed portion—always return the complete template. If there is no existing content or the user asks for a new template from scratch, generate accordingly.",
+            "If the user asks to modify the current template (e.g. 'fix the tone', 'add a section about X', 'rewrite paragraph 2'), apply those changes and return the full modified template. Do not return only the changed portion—always return the complete template. If there is no existing content or the user asks for a new template from scratch, generate accordingly.",
             "",
             "---",
-            "Current document template in Quill Delta JSON (modify this when the user requests edits; otherwise extend or replace as their prompt indicates):",
+            "Current template in Quill Delta JSON:",
             current_delta_str or "(No existing content)",
-            "",
         ]
 
         system_parts.extend(["", "---", "Output valid JSON only."])
