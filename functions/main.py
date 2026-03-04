@@ -1105,3 +1105,183 @@ def ai_generate_document_text(customer_id):
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.post("/templates/create")
+@login_required
+def create_template():
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        request_data = request.get_json()
+        template_name = request_data.get("name")
+        text = request_data.get("text")
+        plain_text = request_data.get("plainText")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        template_doc_ref = firestore_client.collection(
+            "templates").document()
+        template_id = template_doc_ref.id
+
+        template_json = {
+            "name": template_name,
+            "text": text,
+            "plainText": plain_text,
+            "createdAt": SERVER_TIMESTAMP
+        }
+
+        template_doc_ref.set(template_json)
+
+        template_doc = template_doc_ref.get(field_paths=[
+            "name", "text", "plainText", "createdAt"])
+        template_json = template_doc.to_dict()
+        template_json["id"] = template_id
+        template_json["createdAt"] = template_doc.get(
+            "createdAt").isoformat()
+
+        return jsonify(template_json), 201
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/templates")
+@login_required
+def get_templates():
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        templates_docs = firestore_client.collection(
+            "templates").where(filter=FieldFilter("userId", "==", user_uid)).get()
+
+        templates_list = []
+        for template_doc in templates_docs:
+            template_json = template_doc.to_dict()
+            templates_list.append({
+                "id": template_doc.id,
+                "name": template_json.get("name"),
+                "text": template_json.get("text"),
+                "plainText": template_json.get("plainText"),
+                "createdAt": template_json.get("createdAt").isoformat()
+            })
+        return jsonify(templates_list), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/templates/<template_id>")
+@login_required
+def get_template(template_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        template_doc_ref = firestore_client.collection(
+            "templates").document(template_id)
+        template_doc = template_doc_ref.get(field_paths=[
+            "name", "text", "plainText", "createdAt"])
+        template_json = template_doc.to_dict()
+        template_json["id"] = template_id
+        template_json["createdAt"] = template_doc.get(
+            "createdAt").isoformat()
+        return jsonify(template_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.put("/templates/<template_id>/update")
+@login_required
+def update_template(template_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        request_data = request.get_json()
+        template_name = request_data.get("name")
+        text = request_data.get("text")
+        plain_text = request_data.get("plainText")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        template_doc_ref = firestore_client.collection(
+            "templates").document(template_id)
+        template_doc_ref.update({
+            "name": template_name,
+            "text": text,
+            "plainText": plain_text,
+        })
+
+        template_doc = template_doc_ref.get(field_paths=[
+            "name", "text", "plainText", "createdAt"])
+        template_json = template_doc.to_dict()
+        template_json["id"] = template_id
+        template_json["createdAt"] = template_doc.get(
+            "createdAt").isoformat()
+        return jsonify(template_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.delete("/templates/<template_id>/delete")
+@login_required
+def delete_template(template_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        template_doc_ref = firestore_client.collection(
+            "templates").document(template_id)
+        template_doc_ref.delete()
+        return jsonify({}), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/templates/ai/generate")
+@login_required
+def ai_generate_template_text():
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        request_data = request.get_json()
+        prompt = request_data.get("prompt")
+        current_text = request_data.get("currentText")
+
+        current_delta_str = json.dumps(current_text)
+
+        system_parts = [
+            "You are a document template generation assistant. The user will send a prompt describing what they want in the document template.",
+            "The current template and your response both use Quill Delta JSON format: {\"ops\": [{\"insert\": \"text\", \"attributes\": {...}}, ...]}. Preserve all existing formatting attributes (bold, italic, header, alignment, color, etc.) unless the user explicitly asks to change them.",
+            "",
+            "Important: If the user asks to modify, edit, revise, or change the current template (e.g. 'fix the tone', 'add a section about X', 'rewrite paragraph 2'), apply those changes to the existing content and return the full modified template as a Delta. Do not return only the changed portion—always return the complete template. If there is no existing content or the user asks for a new template from scratch, generate accordingly.",
+            "",
+            "---",
+            "Current document template in Quill Delta JSON (modify this when the user requests edits; otherwise extend or replace as their prompt indicates):",
+            current_delta_str or "(No existing content)",
+            "",
+        ]
+
+        system_parts.extend(["", "---", "Output valid JSON only."])
+        system_message = "\n".join(system_parts)
+
+        llm_client = LLMClient().client
+
+        response = llm_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
+            system=system_message,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        response_text = response.content[0].text
+
+        template_delta = json.loads(response_text)
+
+        return jsonify(template_delta), 200
+
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
