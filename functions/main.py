@@ -1083,7 +1083,7 @@ def ai_generate_document_text(customer_id):
         llm_client = LLMClient().client
 
         response = llm_client.messages.create(
-            model="claude-sonnet-4-6",
+            model=os.getenv("LLM_MODEL"),
             max_tokens=4096,
             system=system_message,
             messages=[{"role": "user", "content": prompt}],
@@ -1127,13 +1127,14 @@ def create_template():
             "name": template_name,
             "text": text,
             "plainText": plain_text,
-            "createdAt": SERVER_TIMESTAMP
+            "createdAt": SERVER_TIMESTAMP,
+            "userId": user_uid
         }
 
         template_doc_ref.set(template_json)
 
         template_doc = template_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "createdAt"])
+            "name", "text", "plainText", "createdAt", "userId"])
         template_json = template_doc.to_dict()
         template_json["id"] = template_id
         template_json["createdAt"] = template_doc.get(
@@ -1163,7 +1164,8 @@ def get_templates():
                 "name": template_json.get("name"),
                 "text": template_json.get("text"),
                 "plainText": template_json.get("plainText"),
-                "createdAt": template_json.get("createdAt").isoformat()
+                "createdAt": template_json.get("createdAt").isoformat(),
+                "userId": template_json.get("userId")
             })
         return jsonify(templates_list), 200
     except Exception as e:
@@ -1181,7 +1183,7 @@ def get_template(template_id):
         template_doc_ref = firestore_client.collection(
             "templates").document(template_id)
         template_doc = template_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "createdAt"])
+            "name", "text", "plainText", "createdAt", "userId"])
         template_json = template_doc.to_dict()
         template_json["id"] = template_id
         template_json["createdAt"] = template_doc.get(
@@ -1213,7 +1215,7 @@ def update_template(template_id):
         })
 
         template_doc = template_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "createdAt"])
+            "name", "text", "plainText", "createdAt", "userId"])
         template_json = template_doc.to_dict()
         template_json["id"] = template_id
         template_json["createdAt"] = template_doc.get(
@@ -1256,7 +1258,7 @@ def ai_generate_template_text():
         system_parts = [
             "You are a document template generation assistant for a contractor CRM platform. The user will send a prompt describing what they want in a reusable document template.",
             "",
-            "Templates are used repeatedly across different customers, so they must be customer-agnostic. Use placeholder variables like {{customer_name}}, {{customer_address}}, {{customer_email}}, {{customer_phone}}, {{date}}, {{project_description}}, {{company_name}}, etc. where customer- or project-specific details would go. Never hard-code specific names, addresses, or details that would change per customer.",
+            "Templates are used repeatedly across different customers, so they must be customer-agnostic. Use placeholder variables like **CUSTOMER_NAME**, **CUSTOMER_ADDRESS**, **CUSTOMER_EMAIL**, **CUSTOMER_PHONE**, **DATE**, **PROJECT_DESCRIPTION**, **COMPANY_NAME**, etc. where customer- or project-specific details would go. Never hard-code specific names, addresses, or details that would change per customer.",
             "",
             "The current template and your response both use Quill Delta JSON format: {\"ops\": [{\"insert\": \"text\", \"attributes\": {...}}, ...]}. Preserve all existing formatting attributes (bold, italic, header, alignment, color, etc.) unless the user explicitly asks to change them.",
             "",
@@ -1273,17 +1275,56 @@ def ai_generate_template_text():
         llm_client = LLMClient().client
 
         response = llm_client.messages.create(
-            model="claude-sonnet-4-6",
+            model=os.getenv("LLM_MODEL"),
             max_tokens=4096,
             system=system_message,
             messages=[{"role": "user", "content": prompt}],
+            output_config={
+                "format": {
+                    "type": "json_schema",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "ops": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "insert": {"type": "string"},
+                                        "attributes": {"type": "string"},
+                                    },
+                                    "required": ["insert"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                        },
+                        "required": ["ops"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
         )
+        print("+" * 100)
         response_text = response.content[0].text
+        print("response_text: ", response_text)
+        print("+" * 100)
 
         template_delta = json.loads(response_text)
+
+        for op in template_delta.get("ops", []):
+            if "attributes" in op and op["attributes"]:
+                try:
+                    op["attributes"] = json.loads(op["attributes"])
+                except (json.JSONDecodeError, TypeError):
+                    del op["attributes"]
+            elif "attributes" in op:
+                del op["attributes"]
 
         return jsonify(template_delta), 200
 
     except Exception as e:
+        print("=" * 100)
+        print("error: ", e)
+        print("=" * 100)
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
