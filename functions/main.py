@@ -19,6 +19,7 @@ from qdrant_client import models
 from clients.llm_client import LLMClient
 from markdown_to_delta import convert_markdown_to_delta
 from itertools import chain
+import re
 
 initialize_app(
     options={"storageBucket": f"{PROJECT_ID.value}.firebasestorage.app"})
@@ -1090,18 +1091,13 @@ def ai_generate_document_text(customer_id):
         )
         response_text = response.content[0].text
 
-        print("=" * 100)
-        print("type(response_text): ", type(response_text))
-        print("response_text: ", response_text)
+        # Remove ```json fences
+        cleaned_response_text = re.sub(
+            r"```json|```", "", response_text).strip()
 
-        document_delta = json.loads(response_text)
-        print("type(document_delta): ", type(document_delta))
-        print("document_delta: ", document_delta)
-
-        print("=" * 100)
+        document_delta = json.loads(cleaned_response_text)
 
         return jsonify(document_delta), 200
-
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -1279,52 +1275,17 @@ def ai_generate_template_text():
             max_tokens=4096,
             system=system_message,
             messages=[{"role": "user", "content": prompt}],
-            output_config={
-                "format": {
-                    "type": "json_schema",
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "ops": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "insert": {"type": "string"},
-                                        "attributes": {"type": "string"},
-                                    },
-                                    "required": ["insert"],
-                                    "additionalProperties": False,
-                                },
-                            },
-                        },
-                        "required": ["ops"],
-                        "additionalProperties": False,
-                    },
-                }
-            },
         )
-        print("+" * 100)
         response_text = response.content[0].text
-        print("response_text: ", response_text)
-        print("+" * 100)
 
-        template_delta = json.loads(response_text)
+        # Remove ```json fences
+        cleaned_response_text = re.sub(
+            r"```json|```", "", response_text).strip()
 
-        for op in template_delta.get("ops", []):
-            if "attributes" in op and op["attributes"]:
-                try:
-                    op["attributes"] = json.loads(op["attributes"])
-                except (json.JSONDecodeError, TypeError):
-                    del op["attributes"]
-            elif "attributes" in op:
-                del op["attributes"]
+        template_delta = json.loads(cleaned_response_text)
 
         return jsonify(template_delta), 200
 
     except Exception as e:
-        print("=" * 100)
-        print("error: ", e)
-        print("=" * 100)
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
