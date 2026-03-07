@@ -1356,6 +1356,9 @@ def get_company_me():
                 "createdAt").isoformat()
             break
 
+        if not company_json:
+            return jsonify({}), 404
+
         return jsonify(company_json), 200
     except Exception as e:
         logger.error(f"error: {e}")
