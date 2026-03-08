@@ -1394,3 +1394,26 @@ def update_company_me():
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.put("/users/me/deactivate")
+@login_required
+def deactivate_user_me():
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        user_doc_ref = firestore_client.collection(
+            "users").document(user_uid)
+
+        user_doc_ref.update({
+            "deactivated": True,
+            # timestamp used to track when the user was deactivated, and determine when to schedule deletion (i.e. 30 days after deactivation)
+            "deactivatedAt": SERVER_TIMESTAMP
+        })
+        # Deactivate the user in Firebase Authentication
+        auth.update_user(user_uid, disabled=True)
+        return jsonify({}), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
