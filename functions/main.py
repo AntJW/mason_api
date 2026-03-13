@@ -956,7 +956,7 @@ def get_document(customer_id, document_id):
         document_doc_ref = firestore_client.collection(
             "documents").document(document_id)
         document_doc = document_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "sourceTemplateId", "customerId", "createdAt"])
+            "name", "text", "plainText", "sourceTemplateId", "signees", "signatureBoxes", "customerId", "createdAt"])
         document_json = document_doc.to_dict()
         document_json["id"] = document_id
         document_json["createdAt"] = document_doc.get(
@@ -978,6 +978,8 @@ def update_document(customer_id, document_id):
         text = request_data.get("text")
         plain_text = request_data.get("plainText")
         source_template_id = request_data.get("sourceTemplateId", None)
+        signees = request_data.get("signees", None)
+        signatureBoxes = request_data.get("signatureBoxes", None)
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
         document_doc_ref = firestore_client.collection(
@@ -986,11 +988,13 @@ def update_document(customer_id, document_id):
             "name": document_name,
             "text": text,
             "plainText": plain_text,
-            "sourceTemplateId": source_template_id
+            "sourceTemplateId": source_template_id,
+            "signees": signees,
+            "signatureBoxes": signatureBoxes
         })
 
         document_doc = document_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "sourceTemplateId", "customerId", "createdAt"])
+            "name", "text", "plainText", "sourceTemplateId", "signees", "signatureBoxes", "customerId", "createdAt"])
         document_json = document_doc.to_dict()
         document_json["id"] = document_id
         document_json["createdAt"] = document_doc.get(
