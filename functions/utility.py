@@ -70,10 +70,14 @@ def convert_audio_sample_rate(file_path, sample_rate: int = 16000):
         raise e
 
 
-def upload_to_storage(local_tmp_file_path, storage_file_path, make_public: bool = False):
+def upload_to_storage(local_tmp_file_path, storage_file_path, content_type: str = None, make_public: bool = False):
     try:
         bucket = storage.bucket()
         blob = bucket.blob(storage_file_path)
+
+        if content_type:
+            blob.content_type = content_type
+
         blob.upload_from_filename(local_tmp_file_path)
 
         if make_public:

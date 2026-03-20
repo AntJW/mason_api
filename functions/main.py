@@ -1,6 +1,7 @@
 from firebase_admin import initialize_app, firestore, auth
 from firebase_functions import https_fn, options
 from flask import Flask, request, jsonify, Response, stream_with_context
+from google.cloud.firestore_v1 import And
 from auth_decorator import login_required, login_or_anonymous_required
 import google.cloud.firestore
 from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter
@@ -978,8 +979,6 @@ def update_document(customer_id, document_id):
         text = request_data.get("text")
         plain_text = request_data.get("plainText")
         source_template_id = request_data.get("sourceTemplateId", None)
-        signers = request_data.get("signers", None)
-        signatureBoxes = request_data.get("signatureBoxes", None)
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
         document_doc_ref = firestore_client.collection(
@@ -988,9 +987,7 @@ def update_document(customer_id, document_id):
             "name": document_name,
             "text": text,
             "plainText": plain_text,
-            "sourceTemplateId": source_template_id,
-            "signers": signers,
-            "signatureBoxes": signatureBoxes
+            "sourceTemplateId": source_template_id
         })
 
         document_doc = document_doc_ref.get(field_paths=[
@@ -1005,27 +1002,115 @@ def update_document(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.put("/customers/<customer_id>/documents/<document_id>/signatures")
+@app.put("/customers/<customer_id>/documents/<document_id>/signers")
 @login_required
-def update_document_signatures(customer_id, document_id):
+def update_document_signers(customer_id, document_id):
     try:
         user = request.user
         user_uid = user.get("uid")
         request_data = request.get_json()
-        signer_id = request_data.get("signerId")
-        signature_image = request_data.get("signatureImage")
+        signers = request_data.get("signers")
 
-        # 1. upload signature image to storage
-        # 2. update document signatures in firestore (signatureImageUrl) for specific signer
-        # 3. update document status
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        document_doc_ref = firestore_client.collection(
+            "documents").document(document_id)
+        document_doc_ref.update({
+            "signers": signers
+        })
 
-        signature_image_path = f"customers/{customer_id}/documents/{document_id}/signatures/{signer_id}.png"
-        signature_image_url = upload_to_storage(
-            signature_image, signature_image_path)
+        document_doc = document_doc_ref.get(field_paths=[
+            "name", "text", "plainText", "sourceTemplateId", "signers", "signatureBoxes", "customerId", "createdAt"])
+        document_json = document_doc.to_dict()
+        document_json["id"] = document_id
+        document_json["createdAt"] = document_doc.get(
+            "createdAt").isoformat()
+        return jsonify(document_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.put("/customers/<customer_id>/documents/<document_id>/signature-boxes")
+@login_required
+def update_document_signature_boxes(customer_id, document_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        request_data = request.get_json()
+        signature_boxes = request_data.get("signatureBoxes")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        document_doc_ref = firestore_client.collection(
+            "documents").document(document_id)
+        document_doc_ref.update({
+            "signatureBoxes": signature_boxes
+        })
+
+        document_doc = document_doc_ref.get(field_paths=[
+            "name", "text", "plainText", "sourceTemplateId", "signers", "signatureBoxes", "customerId", "createdAt"])
+        document_json = document_doc.to_dict()
+        document_json["id"] = document_id
+        document_json["createdAt"] = document_doc.get(
+            "createdAt").isoformat()
+        return jsonify(document_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/customers/<customer_id>/documents/<document_id>/signatures")
+@login_required
+def create_document_signature(customer_id, document_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        request_form = request.form
+        signer_id = request_form.get("signerId")
+        signature_image_file = request.files["file"]
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
 
-        return jsonify({}), 200
+        # Upload signature image to storage
+        tmp_path = save_file_to_tmp(signature_image_file)
+
+        signature_image_path = f"customers/{customer_id}/documents/{document_id}/signatures/{uuid.uuid4()}.png"
+        signature_image_url = upload_to_storage(
+            tmp_path, signature_image_path, content_type="image/png")
+        delete_tmp_file(tmp_path)
+
+        document_doc_ref = firestore_client.collection(
+            "documents").document(document_id)
+
+        # Get existing signature image url for specific signer if exists, and delete it from storage if exists
+        document_doc = document_doc_ref.get(field_paths=["signatureBoxes"])
+        signature_boxes = document_doc.to_dict().get("signatureBoxes", [])
+        for signature_box in signature_boxes:
+            if signature_box.get("signerId") == signer_id and signature_box.get("signatureImageStoragePath"):
+                try:
+                    delete_from_storage(signature_box.get(
+                        "signatureImageStoragePath"))
+                except Exception as e:
+                    logger.error(f"error: {e}")
+
+                break
+
+        # Update document signatures in firestore (signatureImageUrl) for specific signer
+        for signature_box in signature_boxes:
+            if signature_box.get("signerId") == signer_id:
+                signature_box["signatureImageStoragePath"] = signature_image_path
+
+        document_doc_ref.update({
+            "signatureBoxes": signature_boxes
+        })
+
+        # TODO: update document status
+
+        document_json = document_doc_ref.get().to_dict()
+        document_json["id"] = document_id
+        document_json["createdAt"] = document_json.get(
+            "createdAt").isoformat()
+
+        return jsonify(document_json), 201
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
