@@ -21,6 +21,7 @@ from clients.llm_client import LLMClient
 from markdown_to_delta import convert_markdown_to_delta
 from itertools import chain
 import re
+from clients.email_client import EmailClient
 
 initialize_app(
     options={"storageBucket": f"{PROJECT_ID.value}.firebasestorage.app"})
@@ -1109,11 +1110,11 @@ def create_document_signature(customer_id, document_id):
         # If document is has all the signature boxes with the signature image path, then the document is status "complete"
 
         # VALID_TRANSITIONS = {
-    # 'draft': ['prepared', 'sent'],  # contractor can send without signing first
-    # 'prepared': ['sent'],
-    # 'sent': ['completed'],
-    # 'completed': []
-# }
+        # 'draft': ['prepared', 'sent'],  # contractor can send without signing first
+        # 'prepared': ['sent'],
+        # 'sent': ['completed'],
+        # 'completed': []
+        # }
 
         updated_document_json = document_doc_ref.get().to_dict()
 
@@ -1146,6 +1147,52 @@ def create_document_signature(customer_id, document_id):
             "createdAt").isoformat()
 
         return jsonify(document_json), 201
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/customers/<customer_id>/documents/<document_id>/send-invitations")
+@login_required
+def send_document_for_signature(customer_id, document_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        request_data = request.get_json()
+        signers = request_data.get("signers")
+        subject = request_data.get("subject")
+        body = request_data.get("body")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+
+        document_doc_ref = firestore_client.collection(
+            "documents").document(document_id)
+
+        if document_doc_ref.get().to_dict().get("status") == "complete":
+            return jsonify({"error": "Document is already in status 'complete'"}, 400)
+
+        for signer in signers:
+            response = EmailClient().send_simple_message(signer.get("email"), subject, body)
+            print(response.text)
+            print(response.status_code)
+            print(response.headers)
+            print(response.content)
+            print(response.json())
+            print(response.text)
+            print(response.status_code)
+            print(response.headers)
+            print(response.content)
+            print(response.json())
+
+        document_doc_ref.update({
+            "status": "sent"
+        })
+
+        document_json = document_doc_ref.get().to_dict()
+        document_json["id"] = document_id
+        document_json["createdAt"] = document_json.get(
+            "createdAt").isoformat()
+        return jsonify(document_json), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
