@@ -1152,14 +1152,13 @@ def create_document_signature(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.post("/customers/<customer_id>/documents/<document_id>/send-invitations")
+@app.post("/customers/<customer_id>/documents/<document_id>/signatures/invitations")
 @login_required
 def send_document_for_signature(customer_id, document_id):
     try:
         user = request.user
         user_uid = user.get("uid")
         request_data = request.get_json()
-        signers = request_data.get("signers")
         subject = request_data.get("subject")
         body = request_data.get("body")
 
@@ -1171,18 +1170,17 @@ def send_document_for_signature(customer_id, document_id):
         if document_doc_ref.get().to_dict().get("status") == "complete":
             return jsonify({"error": "Document is already in status 'complete'"}, 400)
 
-        for signer in signers:
-            response = EmailClient().send_simple_message(signer.get("email"), subject, body)
-            print(response.text)
-            print(response.status_code)
-            print(response.headers)
-            print(response.content)
-            print(response.json())
-            print(response.text)
-            print(response.status_code)
-            print(response.headers)
-            print(response.content)
-            print(response.json())
+        existing_document_json = document_doc_ref.get().to_dict()
+
+        signature_boxes_signer_ids = [signature_box.get(
+            "signerId") for signature_box in existing_document_json.get("signatureBoxes")]
+        signers = existing_document_json.get("signers")
+
+        recipients = [signer.get("email") for signer in signers if signer.get(
+            "id") in signature_boxes_signer_ids]
+
+        for recipient in recipients:
+            response = EmailClient().send_simple_message(recipient, subject, body)
 
         document_doc_ref.update({
             "status": "sent"
