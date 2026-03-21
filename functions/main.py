@@ -939,7 +939,8 @@ def get_documents(customer_id):
                 "plainText": document_json.get("plainText"),
                 "customerId": document_json.get("customerId"),
                 "sourceTemplateId": document_json.get("sourceTemplateId", None),
-                "createdAt": document_json.get("createdAt").isoformat()
+                "createdAt": document_json.get("createdAt").isoformat(),
+                "status": document_json.get("status")
             })
         return jsonify(documents_list), 200
     except Exception as e:
@@ -957,7 +958,7 @@ def get_document(customer_id, document_id):
         document_doc_ref = firestore_client.collection(
             "documents").document(document_id)
         document_doc = document_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "sourceTemplateId", "signers", "signatureBoxes", "customerId", "createdAt"])
+            "name", "text", "plainText", "sourceTemplateId", "signers", "signatureBoxes", "customerId", "createdAt", "status"])
         document_json = document_doc.to_dict()
         document_json["id"] = document_id
         document_json["createdAt"] = document_doc.get(
@@ -991,7 +992,7 @@ def update_document(customer_id, document_id):
         })
 
         document_doc = document_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "sourceTemplateId", "signers", "signatureBoxes", "customerId", "createdAt"])
+            "name", "text", "plainText", "sourceTemplateId", "signers", "signatureBoxes", "customerId", "createdAt", "status"])
         document_json = document_doc.to_dict()
         document_json["id"] = document_id
         document_json["createdAt"] = document_doc.get(
@@ -1019,7 +1020,7 @@ def update_document_signers(customer_id, document_id):
         })
 
         document_doc = document_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "sourceTemplateId", "signers", "signatureBoxes", "customerId", "createdAt"])
+            "name", "text", "plainText", "sourceTemplateId", "signers", "signatureBoxes", "customerId", "createdAt", "status"])
         document_json = document_doc.to_dict()
         document_json["id"] = document_id
         document_json["createdAt"] = document_doc.get(
@@ -1047,7 +1048,7 @@ def update_document_signature_boxes(customer_id, document_id):
         })
 
         document_doc = document_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "sourceTemplateId", "signers", "signatureBoxes", "customerId", "createdAt"])
+            "name", "text", "plainText", "sourceTemplateId", "signers", "signatureBoxes", "customerId", "createdAt", "status"])
         document_json = document_doc.to_dict()
         document_json["id"] = document_id
         document_json["createdAt"] = document_doc.get(
@@ -1082,8 +1083,8 @@ def create_document_signature(customer_id, document_id):
             "documents").document(document_id)
 
         # Get existing signature image url for specific signer if exists, and delete it from storage if exists
-        document_doc = document_doc_ref.get(field_paths=["signatureBoxes"])
-        signature_boxes = document_doc.to_dict().get("signatureBoxes", [])
+        existing_document_json = document_doc_ref.get().to_dict()
+        signature_boxes = existing_document_json.get("signatureBoxes", [])
         for signature_box in signature_boxes:
             if signature_box.get("signerId") == signer_id and signature_box.get("signatureImageStoragePath"):
                 try:
@@ -1094,7 +1095,7 @@ def create_document_signature(customer_id, document_id):
 
                 break
 
-        # Update document signatures in firestore (signatureImageUrl) for specific signer
+        # Update document signatures in firestore (signatureImageStoragePath) for specific signer
         for signature_box in signature_boxes:
             if signature_box.get("signerId") == signer_id:
                 signature_box["signatureImageStoragePath"] = signature_image_path
@@ -1104,6 +1105,40 @@ def create_document_signature(customer_id, document_id):
         })
 
         # TODO: update document status
+        # contractor/user is the only one who signed, and there are other signature boxes without the signature image path, then the document is status "prepared", unless the document is already in status "sent"
+        # If document is has all the signature boxes with the signature image path, then the document is status "complete"
+
+        # VALID_TRANSITIONS = {
+    # 'draft': ['prepared', 'sent'],  # contractor can send without signing first
+    # 'prepared': ['sent'],
+    # 'sent': ['completed'],
+    # 'completed': []
+# }
+
+        updated_document_json = document_doc_ref.get().to_dict()
+
+        signers = updated_document_json.get("signers") or []
+        matching_signer = next(
+            (s for s in signers if s.get("id") == signer_id), None)
+
+        # How many signature boxes have the signature image path
+        signature_boxes = updated_document_json.get("signatureBoxes") or []
+        signature_boxes_with_image_path = [
+            signature_box for signature_box in signature_boxes if signature_box.get("signatureImageStoragePath")
+        ]
+        if len(signature_boxes_with_image_path) == len(signature_boxes):
+            document_doc_ref.update({
+                "status": "complete"
+            })
+        elif (
+            matching_signer
+            and matching_signer.get("userId")
+            and updated_document_json.get("status") != "sent"
+            and updated_document_json.get("status") != "complete"
+        ):
+            document_doc_ref.update({
+                "status": "prepared"
+            })
 
         document_json = document_doc_ref.get().to_dict()
         document_json["id"] = document_id
