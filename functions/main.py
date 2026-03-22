@@ -566,7 +566,6 @@ def summarize_conversation(customer_id, conversation_id):
 @login_required
 def get_conversation(customer_id, conversation_id):
     try:
-        print("here =" * 100)
         firestore_client: google.cloud.firestore.Client = firestore.client()
         conversation_doc_ref = firestore_client.collection(
             "conversations").document(conversation_id)
@@ -626,8 +625,6 @@ def update_conversation_summary(customer_id, conversation_id):
         firestore_client: google.cloud.firestore.Client = firestore.client()
         conversation_doc_ref = firestore_client.collection(
             "conversations").document(conversation_id)
-
-        print(summary_raw)
 
         conversation_doc_ref.update({
             "summary": summary,
@@ -1074,10 +1071,9 @@ def create_document_signature(customer_id, document_id):
 
         # Upload signature image to storage
         tmp_path = save_file_to_tmp(signature_image_file)
-
         signature_image_path = f"customers/{customer_id}/documents/{document_id}/signatures/{uuid.uuid4()}.png"
-        signature_image_url = upload_to_storage(
-            tmp_path, signature_image_path, content_type="image/png")
+        upload_to_storage(tmp_path, signature_image_path,
+                          content_type="image/png")
         delete_tmp_file(tmp_path)
 
         document_doc_ref = firestore_client.collection(
@@ -1105,17 +1101,6 @@ def create_document_signature(customer_id, document_id):
             "signatureBoxes": signature_boxes
         })
 
-        # TODO: update document status
-        # contractor/user is the only one who signed, and there are other signature boxes without the signature image path, then the document is status "prepared", unless the document is already in status "sent"
-        # If document is has all the signature boxes with the signature image path, then the document is status "complete"
-
-        # VALID_TRANSITIONS = {
-        # 'draft': ['prepared', 'sent'],  # contractor can send without signing first
-        # 'prepared': ['sent'],
-        # 'sent': ['completed'],
-        # 'completed': []
-        # }
-
         updated_document_json = document_doc_ref.get().to_dict()
 
         signers = updated_document_json.get("signers") or []
@@ -1141,6 +1126,19 @@ def create_document_signature(customer_id, document_id):
                 "status": "prepared"
             })
 
+        # Remove signers that don't have a matching signature box. This is to ensure
+        # that the signers list is up to date, once signatures are added.
+        signers = updated_document_json.get("signers") or []
+        signature_boxes = updated_document_json.get("signatureBoxes") or []
+        if len(signers) != len(signature_boxes):
+            signature_boxes_signer_ids = [signature_box.get(
+                "signerId") for signature_box in signature_boxes]
+            signers = [signer for signer in signers if signer.get(
+                "id") in signature_boxes_signer_ids]
+            document_doc_ref.update({
+                "signers": signers
+            })
+
         document_json = document_doc_ref.get().to_dict()
         document_json["id"] = document_id
         document_json["createdAt"] = document_json.get(
@@ -1154,7 +1152,7 @@ def create_document_signature(customer_id, document_id):
 
 @app.post("/customers/<customer_id>/documents/<document_id>/signatures/invitations")
 @login_required
-def send_document_for_signature(customer_id, document_id):
+def send_signature_invitations(customer_id, document_id):
     try:
         user = request.user
         user_uid = user.get("uid")
@@ -1185,6 +1183,66 @@ def send_document_for_signature(customer_id, document_id):
         document_doc_ref.update({
             "status": "sent"
         })
+
+        # Remove signers that don't have a matching signature box. This is to ensure
+        # that the signers list is up to date, once invitations are sent.
+        signers = existing_document_json.get("signers") or []
+        signature_boxes = existing_document_json.get("signatureBoxes") or []
+        if len(signers) != len(signature_boxes):
+            signature_boxes_signer_ids = [signature_box.get(
+                "signerId") for signature_box in signature_boxes]
+            signers = [signer for signer in signers if signer.get(
+                "id") in signature_boxes_signer_ids]
+            document_doc_ref.update({
+                "signers": signers
+            })
+
+        document_json = document_doc_ref.get().to_dict()
+        document_json["id"] = document_id
+        document_json["createdAt"] = document_json.get(
+            "createdAt").isoformat()
+        return jsonify(document_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.put("/customers/<customer_id>/documents/<document_id>/signatures/invitations/cancel")
+@login_required
+def cancel_signature_invitations(customer_id, document_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        document_doc_ref = firestore_client.collection(
+            "documents").document(document_id)
+
+        existing_document_json = document_doc_ref.get().to_dict()
+        updated_signature_boxes = []
+        for signature_box in existing_document_json.get("signatureBoxes") or []:
+
+            # delete signature image from storage if exists
+            if signature_box.get("signatureImageStoragePath"):
+                delete_from_storage(signature_box.get(
+                    "signatureImageStoragePath"))
+
+                signature_box['signatureImageStoragePath'] = None
+
+            updated_signature_boxes.append(signature_box)
+
+        # update document status to draft
+        document_doc_ref.update({
+            "signatureBoxes": updated_signature_boxes,
+            "status": "draft"
+        })
+
+        # send email to all signers to cancelling signature request
+        signers = existing_document_json.get("signers") or []
+        recipients = [signer.get("email") for signer in signers]
+        for recipient in recipients:
+            response = EmailClient().send_simple_message(recipient, "Signature Request Cancelled",
+                                                         "The signature request for the document has been cancelled.")
 
         document_json = document_doc_ref.get().to_dict()
         document_json["id"] = document_id
