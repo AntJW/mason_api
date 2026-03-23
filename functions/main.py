@@ -1254,6 +1254,50 @@ def cancel_signature_invitations(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.put("/customers/<customer_id>/documents/<document_id>/signatures/me")
+@login_required
+def remove_user_signature(customer_id, document_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        document_doc_ref = firestore_client.collection(
+            "documents").document(document_id)
+
+        existing_document_json = document_doc_ref.get().to_dict()
+
+        status = existing_document_json.get("status")
+        if status != "prepared":
+            return jsonify({"error": "Document cannot be modified in current status."}, 400)
+
+        signer = next((s for s in existing_document_json.get(
+            "signers") or [] if s.get("userId") == user_uid), None)
+
+        signature_boxes = existing_document_json.get("signatureBoxes") or []
+        updated_signature_boxes = []
+        for signature_box in signature_boxes:
+            if signature_box.get("signerId") == signer.get("id") and signature_box.get("signatureImageStoragePath") is not None:
+                delete_from_storage(signature_box.get(
+                    "signatureImageStoragePath"))
+                signature_box['signatureImageStoragePath'] = None
+            updated_signature_boxes.append(signature_box)
+
+        document_doc_ref.update({
+            "signatureBoxes": updated_signature_boxes,
+            "status": "draft"
+        })
+
+        document_json = document_doc_ref.get().to_dict()
+        document_json["id"] = document_id
+        document_json["createdAt"] = document_json.get(
+            "createdAt").isoformat()
+        return jsonify(document_json), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.delete("/customers/<customer_id>/documents/<document_id>/delete")
 @login_required
 def delete_document(customer_id, document_id):
