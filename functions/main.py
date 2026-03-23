@@ -1298,6 +1298,34 @@ def remove_user_signature(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.post("/customers/<customer_id>/documents/<document_id>/signatures/reminders")
+@login_required
+def send_signature_reminders(customer_id, document_id):
+    try:
+        user = request.user
+        user_uid = user.get("uid")
+        request_data = request.get_json()
+        signer = request_data.get("signer")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+
+        document_doc_ref = firestore_client.collection(
+            "documents").document(document_id)
+
+        if document_doc_ref.get().to_dict().get("status") == "complete":
+            return jsonify({"error": "Document is already in status 'complete'"}, 400)
+
+        existing_document_json = document_doc_ref.get().to_dict()
+
+        response = EmailClient().send_simple_message(signer.get("email"), "Signature Reminder",
+                                                     "You have a signature request for the document. Please sign it.")
+
+        return jsonify({}), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.delete("/customers/<customer_id>/documents/<document_id>/delete")
 @login_required
 def delete_document(customer_id, document_id):
