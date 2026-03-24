@@ -2,21 +2,19 @@ import json
 import os
 import re
 import uuid
-
+import datetime
 import google.cloud.firestore
 from firebase_admin import firestore
 from flask import Blueprint, jsonify, request
 from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter
 from google.cloud.firestore_v1.field_path import FieldPath
 from qdrant_client import models
-
 from auth_decorator import login_required, customer_owner_required
-
-
 from clients.email_client import EmailClient
 from clients.llm_client import LLMClient
 from clients.vector_db_client import VectorDBClient
 from logger import logger
+from enum import Enum
 from utility import (
     delete_tmp_file,
     delete_from_storage,
@@ -51,7 +49,7 @@ def create_document(customer_id):
             "plainText": plain_text,
             "sourceTemplateId": source_template_id,
             "customerId": customer_id,
-            "status": "draft",
+            "status": DocumentStatus.DRAFT.value,
             "createdAt": SERVER_TIMESTAMP
         }
 
@@ -232,7 +230,7 @@ def delete_document_signer(customer_id, document_id, signer_id):
                 signature_ids.add(sid)
 
         # # TODO: I think this is safe to remove in this endpoint. Signers should not have signatures / signature images
-        # # during the execution of this endpoint. When document is signature request cancelled,
+        # # during the execution of this endpoint. When document is signature request canceled,
         # # is when signatures images if they exists, should be deleted. Keep for reference, but I might relocate this to a different endpoint.
         # signature_image_storage_paths = []
         # if signature_ids:
@@ -397,11 +395,11 @@ def create_document_signature(customer_id, document_id):
         # Update document status if applicable
         if len(signature_boxes_with_signatures) == len(all_signature_boxes):
             document_doc_ref.update({
-                "status": "complete"
+                "status": DocumentStatus.COMPLETED.value
             })
-        elif matching_signer and matching_signer.get("userId") and document_doc_ref.get().to_dict().get("status") not in ("sent", "complete"):
+        elif matching_signer and matching_signer.get("userId") and document_doc_ref.get().to_dict().get("status") not in (DocumentStatus.SENT.value, DocumentStatus.COMPLETED.value):
             document_doc_ref.update({
-                "status": "prepared"
+                "status": DocumentStatus.PREPARED.value
             })
 
         # Clean up signers without matching signature boxes.
@@ -430,25 +428,41 @@ def send_signature_invitations(customer_id, document_id):
         if not document_doc_ref:
             return jsonify({"error": "Document not found"}, 404)
 
-        if document_doc_ref.get().to_dict().get("status") == "complete":
+        if document_doc_ref.get().to_dict().get("status") == DocumentStatus.COMPLETED.value:
             return jsonify({"error": "Document is already in status 'complete'"}, 400)
 
         # Clean up signers without matching signature boxes.
         remove_signers_without_matching_signature_boxes(document_doc_ref)
 
         # Recipients list: all signers that are not the current_user / contractor.
-        recipients = set(signer.to_dict().get("email") for signer in document_doc_ref.collection(
-            "signers").get() if signer.to_dict().get("userId", None) != user_uid)
+        recipients = [signer for signer in document_doc_ref.collection(
+            "signers").get() if signer.to_dict().get("userId", None) != user_uid]
 
         subject = "New document ready for you to sign"
         body = "Contractor has a document ready for you to sign. Please sign it electronically, by clicking the link below:"
         for recipient in recipients:
+            signer_id = recipient.id
+            recipient_email = recipient.to_dict().get("email")
+            recipient_name = recipient.to_dict().get("name")
+
             response = EmailClient().send_simple_message(
-                recipient, subject, body)
+                recipient_email, subject, body)
             # TODO: Add retry logic and error handling for email sending.
 
+            document_doc_ref.collection("invitations").document().set({
+                "signerId": signer_id,
+                "email": recipient_email,
+                "name": recipient_name,
+                "documentId": document_id,
+                # TODO: Generate token for signer to use to sign the document.
+                "token": "TODO: Generate token",
+                "status": InvitationStatus.SENT.value,
+                "sentAt": SERVER_TIMESTAMP,
+                "expiresAt": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=14),
+            })
+
         document_doc_ref.update({
-            "status": "sent"
+            "status": DocumentStatus.SENT.value
         })
 
         return jsonify(get_merged_document(document_doc_ref)), 200
@@ -473,7 +487,7 @@ def cancel_signature_invitations(customer_id, document_id):
         if not document_doc_ref:
             return jsonify({"error": "Document not found"}, 404)
 
-        if document_doc_ref.get().to_dict().get("status") == "complete":
+        if document_doc_ref.get().to_dict().get("status") == DocumentStatus.COMPLETED.value:
             return jsonify({"error": "Document is already in status 'complete'"}, 400)
 
         # Remove signatures, and their references from signature boxes
@@ -484,14 +498,33 @@ def cancel_signature_invitations(customer_id, document_id):
             "status": "draft"
         })
 
+        batch = firestore_client.batch()
+
         # Recipients list: all signers that are not the current_user / contractor.
-        recipients = set(signer.to_dict().get("email") for signer in document_doc_ref.collection(
+        recipients = set(signer for signer in document_doc_ref.collection(
             "signers").get() if signer.to_dict().get("userId", None) != user_uid)
         # send email to all signers to cancelling signature request
         for recipient in recipients:
+            signer_id = recipient.id
+            recipient_email = recipient.to_dict().get("email")
+            recipient_name = recipient.to_dict().get("name")
             # TODO: Add retry logic and error handling for email sending.
-            response = EmailClient().send_simple_message(recipient, "Signature Request Cancelled",
-                                                         "The signature request for the document has been cancelled.")
+            response = EmailClient().send_simple_message(recipient_email, "Signature Request Canceled",
+                                                         "The signature request for the document has been canceled.")
+
+            # Update invitations status to canceled
+            invitation_doc_snapshots = document_doc_ref.collection("invitations").where(
+                filter=FieldFilter("signerId", "==", signer_id)).where(
+                filter=FieldFilter("documentId", "==", document_id)).get()
+
+            for invitation_doc_snapshot in invitation_doc_snapshots:
+                batch.update(invitation_doc_snapshot.reference, {
+                    "status": InvitationStatus.CANCELED.value,
+                    "canceledAt": SERVER_TIMESTAMP,
+                    "canceledBy": user_uid
+                })
+
+        batch.commit()
 
         return jsonify(get_merged_document(document_doc_ref)), 200
     except Exception as e:
@@ -518,7 +551,7 @@ def remove_user_signature(customer_id, document_id):
         existing_document_json = document_doc_ref.get().to_dict()
 
         status = existing_document_json.get("status")
-        if status in ("sent", "complete"):
+        if status in (DocumentStatus.SENT.value, DocumentStatus.COMPLETED.value):
             return jsonify({"error": "Document cannot be modified in current status."}, 400)
 
         signer_doc_snapshots = document_doc_ref.collection("signers").where(
@@ -580,7 +613,7 @@ def send_signature_reminders(customer_id, document_id):
         document_doc_ref = get_document_ref_for_customer(
             firestore_client, customer_id, document_id)
 
-        if document_doc_ref.get().to_dict().get("status") == "complete":
+        if document_doc_ref.get().to_dict().get("status") == DocumentStatus.COMPLETED.value:
             return jsonify({"error": "Document is already in status 'complete'"}, 400)
 
         existing_document_json = document_doc_ref.get().to_dict()
@@ -607,7 +640,7 @@ def delete_document(customer_id, document_id):
         if not document_doc_ref:
             return jsonify({"error": "Document not found"}, 404)
 
-        if document_doc_ref.get().to_dict().get("status") in ("prepared", "sent", "complete"):
+        if document_doc_ref.get().to_dict().get("status") in (DocumentStatus.PREPARED.value, DocumentStatus.SENT.value, DocumentStatus.COMPLETED.value):
             return jsonify({"error": "Document not eligible for deletion due to it's current status."}, 400)
 
         document_doc_ref.delete()
@@ -713,7 +746,15 @@ def ai_generate_document_text(customer_id):
 # Helper functions
 # ------------------------------------------------------------------------------------------------
 
+DocumentStatus = Enum("DocumentStatus", [(
+    "DRAFT", "draft"), ("PREPARED", "prepared"), ("SENT", "sent"), ("COMPLETED", "completed")])
+
+InvitationStatus = Enum("InvitationStatus", [("SENT", "sent"), ("OPENED", "opened"), (
+    "COMPLETED", "completed"), ("CANCELED", "canceled"), ("DECLINED", "declined")])
+
 # Get merged document helper function
+
+
 def get_merged_document(document_doc_ref):
     try:
         document_json = document_doc_ref.get().to_dict()
