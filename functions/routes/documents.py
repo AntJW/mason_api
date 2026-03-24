@@ -7,9 +7,12 @@ import google.cloud.firestore
 from firebase_admin import firestore
 from flask import Blueprint, jsonify, request
 from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter
+from google.cloud.firestore_v1.field_path import FieldPath
 from qdrant_client import models
 
-from auth_decorator import login_required
+from auth_decorator import login_required, customer_owner_required
+
+
 from clients.email_client import EmailClient
 from clients.llm_client import LLMClient
 from clients.vector_db_client import VectorDBClient
@@ -26,6 +29,7 @@ bp = Blueprint("documents", __name__)
 
 @bp.post("/customers/<customer_id>/documents/create")
 @login_required
+@customer_owner_required
 def create_document(customer_id):
     try:
         user = request.user
@@ -39,7 +43,6 @@ def create_document(customer_id):
         firestore_client: google.cloud.firestore.Client = firestore.client()
         document_doc_ref = firestore_client.collection(
             "documents").document()
-        document_id = document_doc_ref.id
 
         document_json = {
             "name": document_name,
@@ -47,19 +50,43 @@ def create_document(customer_id):
             "plainText": plain_text,
             "sourceTemplateId": source_template_id,
             "customerId": customer_id,
+            "status": "draft",
             "createdAt": SERVER_TIMESTAMP
         }
 
         document_doc_ref.set(document_json)
 
-        document_doc = document_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "sourceTemplateId", "customerId", "createdAt"])
-        document_json = document_doc.to_dict()
-        document_json["id"] = document_id
-        document_json["createdAt"] = document_doc.get(
-            "createdAt").isoformat()
+        # Create default user signer
+        document_doc_ref.collection("signers").document().set({
+            "name": user.get("name"),
+            "email": user.get("email"),
+            "color": 4282145399,  # blue color
+            "userId": user_uid
+        })
 
-        return jsonify(document_json), 201
+        customer_doc_ref = firestore_client.collection(
+            "customers").document(customer_id)
+        customer_doc = customer_doc_ref.get()
+        customer_json = customer_doc.to_dict()
+
+        # Create default customer signer if email and firstName or lastName are set
+        if customer_json.get("email") and (customer_json.get("firstName") or customer_json.get("lastName")):
+            customer_signer_name = ""
+            if customer_json.get("firstName") and customer_json.get("lastName"):
+                customer_signer_name = f"{customer_json.get('firstName')} {customer_json.get('lastName')}"
+            elif customer_json.get("firstName"):
+                customer_signer_name = customer_json.get("firstName")
+            else:
+                customer_signer_name = customer_json.get("lastName")
+
+            document_doc_ref.collection("signers").document().set({
+                "name": customer_signer_name,
+                "email": customer_json.get("email"),
+                "color": 4283417505,  # aqua green color
+                "customerId": customer_id
+            })
+
+        return jsonify(get_merged_document(document_doc_ref)), 201
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -67,6 +94,7 @@ def create_document(customer_id):
 
 @bp.get("/customers/<customer_id>/documents")
 @login_required
+@customer_owner_required
 def get_documents(customer_id):
     try:
         user = request.user
@@ -96,20 +124,18 @@ def get_documents(customer_id):
 
 @bp.get("/customers/<customer_id>/documents/<document_id>")
 @login_required
+@customer_owner_required
 def get_document(customer_id, document_id):
     try:
         user = request.user
-        user_uid = user.get("uid")
         firestore_client: google.cloud.firestore.Client = firestore.client()
-        document_doc_ref = firestore_client.collection(
-            "documents").document(document_id)
-        document_doc = document_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "sourceTemplateId", "signers", "signatureBoxes", "customerId", "createdAt", "status"])
-        document_json = document_doc.to_dict()
-        document_json["id"] = document_id
-        document_json["createdAt"] = document_doc.get(
-            "createdAt").isoformat()
-        return jsonify(document_json), 200
+        document_doc_ref = get_document_ref_for_customer(
+            firestore_client, customer_id, document_id)
+
+        if not document_doc_ref:
+            return jsonify({"error": "Document not found"}, 404)
+
+        return jsonify(get_merged_document(document_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -117,10 +143,9 @@ def get_document(customer_id, document_id):
 
 @bp.put("/customers/<customer_id>/documents/<document_id>/update")
 @login_required
+@customer_owner_required
 def update_document(customer_id, document_id):
     try:
-        user = request.user
-        user_uid = user.get("uid")
         request_data = request.get_json()
         document_name = request_data.get("name")
         text = request_data.get("text")
@@ -128,8 +153,12 @@ def update_document(customer_id, document_id):
         source_template_id = request_data.get("sourceTemplateId", None)
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
-        document_doc_ref = firestore_client.collection(
-            "documents").document(document_id)
+        document_doc_ref = get_document_ref_for_customer(
+            firestore_client, customer_id, document_id)
+
+        if not document_doc_ref:
+            return jsonify({"error": "Document not found"}, 404)
+
         document_doc_ref.update({
             "name": document_name,
             "text": text,
@@ -137,41 +166,175 @@ def update_document(customer_id, document_id):
             "sourceTemplateId": source_template_id
         })
 
-        document_doc = document_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "sourceTemplateId", "signers", "signatureBoxes", "customerId", "createdAt", "status"])
-        document_json = document_doc.to_dict()
-        document_json["id"] = document_id
-        document_json["createdAt"] = document_doc.get(
-            "createdAt").isoformat()
-        return jsonify(document_json), 200
+        return jsonify(get_merged_document(document_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
 
 
-@bp.put("/customers/<customer_id>/documents/<document_id>/signers")
-@login_required
-def update_document_signers(customer_id, document_id):
+# Get merged document helper function
+def get_merged_document(document_doc_ref):
     try:
-        user = request.user
-        user_uid = user.get("uid")
+        document_json = document_doc_ref.get().to_dict()
+        document_json["id"] = document_doc_ref.id
+        document_json["createdAt"] = document_json.get(
+            "createdAt").isoformat()
+
+        signers_doc_ref = document_doc_ref.collection("signers").get()
+        signers_json = []
+        for signer_doc in signers_doc_ref:
+            signer_json = signer_doc.to_dict()
+            signer_json["id"] = signer_doc.id
+            signers_json.append(signer_json)
+        document_json["signers"] = signers_json
+
+        signature_boxes_docs = document_doc_ref.collection(
+            "signatureBoxes").get()
+        signature_boxes_json = []
+        for signature_box_doc in signature_boxes_docs:
+            signature_box_json = signature_box_doc.to_dict()
+            signature_box_json["id"] = signature_box_doc.id
+            signature_boxes_json.append(signature_box_json)
+        document_json["signatureBoxes"] = signature_boxes_json
+
+        signatures_docs = document_doc_ref.collection("signatures").get()
+        signatures_json = []
+        for signature_doc in signatures_docs:
+            signature_json = signature_doc.to_dict()
+            signature_json["id"] = signature_doc.id
+            signatures_json.append(signature_json)
+        document_json["signatures"] = signatures_json
+
+        return document_json
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return None
+
+
+# Get document ref for customer helper function
+def get_document_ref_for_customer(firestore_client, customer_id, document_id):
+    try:
+        document_ref = firestore_client.collection(
+            "documents").document(document_id)
+        document_snapshots = list(firestore_client.collection(
+            "documents").where(filter=FieldFilter("__name__", "==", document_ref)).where(filter=FieldFilter("customerId", "==", customer_id)).limit(1).get())
+
+        if not document_snapshots:
+            return None
+
+        return document_snapshots[0].reference
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return None
+
+
+@bp.post("/customers/<customer_id>/documents/<document_id>/signers")
+@login_required
+@customer_owner_required
+def create_document_signer(customer_id, document_id):
+    try:
         request_data = request.get_json()
-        signers = request_data.get("signers")
+        signer_name = request_data.get("name")
+        signer_email = request_data.get("email")
+        signer_color = request_data.get("color")
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
-        document_doc_ref = firestore_client.collection(
-            "documents").document(document_id)
-        document_doc_ref.update({
-            "signers": signers
+
+        document_doc_ref = get_document_ref_for_customer(
+            firestore_client, customer_id, document_id)
+
+        if not document_doc_ref:
+            return jsonify({"error": "Document not found"}, 404)
+
+        signers_docs = document_doc_ref.collection("signers").where(
+            filter=FieldFilter("email", "==", signer_email)).get()
+
+        if len(signers_docs) > 0:
+            return jsonify({"error": "Signer already exists"}, 400)
+
+        document_doc_ref.collection("signers").document().set({
+            "name": signer_name,
+            "email": signer_email,
+            "color": signer_color,
         })
 
-        document_doc = document_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "sourceTemplateId", "signers", "signatureBoxes", "customerId", "createdAt", "status"])
-        document_json = document_doc.to_dict()
-        document_json["id"] = document_id
-        document_json["createdAt"] = document_doc.get(
-            "createdAt").isoformat()
-        return jsonify(document_json), 200
+        return jsonify(get_merged_document(document_doc_ref)), 201
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.delete("/customers/<customer_id>/documents/<document_id>/signers/<signer_id>")
+@login_required
+@customer_owner_required
+def delete_document_signer(customer_id, document_id, signer_id):
+    try:
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+
+        document_doc_ref = get_document_ref_for_customer(
+            firestore_client, customer_id, document_id)
+
+        if not document_doc_ref:
+            return jsonify({"error": "Document not found"}, 404)
+
+        signer_doc_ref = document_doc_ref.collection(
+            "signers").document(signer_id)
+        if not signer_doc_ref:
+            return jsonify({"error": "Signer not found"}, 404)
+
+        # Get signature boxes for signer
+        signature_boxes_docs = document_doc_ref.collection("signatureBoxes").where(
+            filter=FieldFilter("signerId", "==", signer_id)).get()
+
+        batch = firestore_client.batch()
+        signature_image_storage_paths = []
+        for signature_box_doc in signature_boxes_docs:
+            batch.delete(signature_box_doc.reference)
+
+            if signature_box_doc.get("signatureImageStoragePath"):
+                signature_image_storage_paths.append(signature_box_doc.get(
+                    "signatureImageStoragePath"))
+
+        # Delete signature images from storage
+        for signature_image_storage_path in signature_image_storage_paths:
+            delete_from_storage(signature_image_storage_path)
+
+        # Batch delete signature boxes
+        batch.commit()
+
+        # Delete signer
+        signer_doc_ref.delete()
+
+        return jsonify(get_merged_document(document_doc_ref)), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.put("/customers/<customer_id>/documents/<document_id>/signers/<signer_id>")
+@login_required
+@customer_owner_required
+def update_document_signer(customer_id, document_id, signer_id):
+    try:
+        request_data = request.get_json()
+        signer = request_data.get("signer")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+
+        document_doc_ref = get_document_ref_for_customer(
+            firestore_client, customer_id, document_id)
+
+        if not document_doc_ref:
+            return jsonify({"error": "Document not found"}, 404)
+
+        signer_doc_ref = document_doc_ref.collection(
+            "signers").document(signer_id)
+        if not signer_doc_ref:
+            return jsonify({"error": "Signer not found"}, 404)
+
+        signer_doc_ref.update(signer)
+
+        return jsonify(get_merged_document(document_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -179,27 +342,34 @@ def update_document_signers(customer_id, document_id):
 
 @bp.put("/customers/<customer_id>/documents/<document_id>/signature-boxes")
 @login_required
+@customer_owner_required
 def update_document_signature_boxes(customer_id, document_id):
     try:
         user = request.user
-        user_uid = user.get("uid")
         request_data = request.get_json()
         signature_boxes = request_data.get("signatureBoxes")
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
-        document_doc_ref = firestore_client.collection(
-            "documents").document(document_id)
-        document_doc_ref.update({
-            "signatureBoxes": signature_boxes
-        })
 
-        document_doc = document_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "sourceTemplateId", "signers", "signatureBoxes", "customerId", "createdAt", "status"])
-        document_json = document_doc.to_dict()
-        document_json["id"] = document_id
-        document_json["createdAt"] = document_doc.get(
-            "createdAt").isoformat()
-        return jsonify(document_json), 200
+        document_doc_ref = get_document_ref_for_customer(
+            firestore_client, customer_id, document_id)
+
+        if not document_doc_ref:
+            return jsonify({"error": "Document not found"}, 404)
+
+        signature_boxes_coll_ref = document_doc_ref.collection(
+            "signatureBoxes")
+        existing_signature_boxes_docs = signature_boxes_coll_ref.list_documents()
+
+        batch = firestore_client.batch()
+        for existing_signature_box_doc in existing_signature_boxes_docs:
+            batch.delete(existing_signature_box_doc)
+        batch.commit()
+
+        for signature_box in signature_boxes:
+            signature_boxes_coll_ref.document().set(signature_box)
+
+        return jsonify(get_merged_document(document_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -207,6 +377,7 @@ def update_document_signature_boxes(customer_id, document_id):
 
 @bp.post("/customers/<customer_id>/documents/<document_id>/signatures")
 @login_required
+@customer_owner_required
 def create_document_signature(customer_id, document_id):
     try:
         user = request.user
@@ -217,6 +388,12 @@ def create_document_signature(customer_id, document_id):
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
 
+        document_doc_ref = get_document_ref_for_customer(
+            firestore_client, customer_id, document_id)
+
+        if not document_doc_ref:
+            return jsonify({"error": "Document not found"}, 404)
+
         # Upload signature image to storage
         tmp_path = save_file_to_tmp(signature_image_file)
         signature_image_path = f"customers/{customer_id}/documents/{document_id}/signatures/{uuid.uuid4()}.png"
@@ -224,75 +401,70 @@ def create_document_signature(customer_id, document_id):
                           content_type="image/png")
         delete_tmp_file(tmp_path)
 
-        document_doc_ref = firestore_client.collection(
-            "documents").document(document_id)
-
-        # Get existing signature image url for specific signer if exists, and delete it from storage if exists
-        existing_document_json = document_doc_ref.get().to_dict()
-        signature_boxes = existing_document_json.get("signatureBoxes", [])
-        for signature_box in signature_boxes:
-            if signature_box.get("signerId") == signer_id and signature_box.get("signatureImageStoragePath"):
-                try:
-                    delete_from_storage(signature_box.get(
-                        "signatureImageStoragePath"))
-                except Exception as e:
-                    logger.error(f"error: {e}")
-
-                break
-
-        # Update document signatures in firestore (signatureImageStoragePath) for specific signer
-        for signature_box in signature_boxes:
-            if signature_box.get("signerId") == signer_id:
-                signature_box["signatureImageStoragePath"] = signature_image_path
-
-        document_doc_ref.update({
-            "signatureBoxes": signature_boxes
+        signature_doc_ref = document_doc_ref.collection(
+            "signatures").document()
+        signature_doc_ref.set({
+            "signerId": signer_id,
+            "signatureImageStoragePath": signature_image_path
         })
 
-        updated_document_json = document_doc_ref.get().to_dict()
+        # Get existing signature boxes for signer
+        signature_box_coll_ref = document_doc_ref.collection("signatureBoxes")
+        signature_boxes = signature_box_coll_ref.where(
+            filter=FieldFilter("signerId", "==", signer_id)).get()
 
-        signers = updated_document_json.get("signers") or []
-        matching_signer = next(
-            (s for s in signers if s.get("id") == signer_id), None)
+        # Update signature boxes with signature id
+        for signature_box in signature_boxes:
+            signature_box_coll_ref.document(signature_box.id).update({
+                "signatureId": signature_doc_ref.id
+            })
 
-        # How many signature boxes have the signature image path
-        signature_boxes = updated_document_json.get("signatureBoxes") or []
-        signature_boxes_with_image_path = [
-            signature_box for signature_box in signature_boxes if signature_box.get("signatureImageStoragePath")
+        matching_signer = document_doc_ref.collection(
+            "signers").document(signer_id).get().to_dict()
+
+        all_signature_boxes = signature_box_coll_ref.get()
+        all_signatures = document_doc_ref.collection(
+            "signatures").get()
+
+        all_signatures_ids_with_image_path = [
+            signature.id
+            for signature in all_signatures
+            if signature.to_dict().get("signatureImageStoragePath")
         ]
-        if len(signature_boxes_with_image_path) == len(signature_boxes):
+
+        signature_boxes_with_signature_images = [
+            signature_box
+            for signature_box in all_signature_boxes
+            if signature_box.to_dict().get("signatureId") in all_signatures_ids_with_image_path
+        ]
+
+        if len(signature_boxes_with_signature_images) == len(all_signature_boxes):
             document_doc_ref.update({
                 "status": "complete"
             })
-        elif (
-            matching_signer
-            and matching_signer.get("userId")
-            and updated_document_json.get("status") != "sent"
-            and updated_document_json.get("status") != "complete"
-        ):
+        elif matching_signer and matching_signer.get("userId") and document_doc_ref.get().to_dict().get("status") not in ("sent", "complete"):
             document_doc_ref.update({
                 "status": "prepared"
             })
 
         # Remove signers that don't have a matching signature box. This is to ensure
         # that the signers list is up to date, once signatures are added.
-        signers = updated_document_json.get("signers") or []
-        signature_boxes = updated_document_json.get("signatureBoxes") or []
-        if len(signers) != len(signature_boxes):
-            signature_boxes_signer_ids = [signature_box.get(
-                "signerId") for signature_box in signature_boxes]
-            signers = [signer for signer in signers if signer.get(
-                "id") in signature_boxes_signer_ids]
-            document_doc_ref.update({
-                "signers": signers
-            })
+        signers = document_doc_ref.collection("signers").list_documents()
+        all_signature_boxes_signer_ids = set(
+            signature_box.to_dict().get("signerId")
+            for signature_box in all_signature_boxes
+        )
 
-        document_json = document_doc_ref.get().to_dict()
-        document_json["id"] = document_id
-        document_json["createdAt"] = document_json.get(
-            "createdAt").isoformat()
+        signers_to_remove = []
+        for signer in signers:
+            if signer.id not in all_signature_boxes_signer_ids:
+                signers_to_remove.append(signer)
 
-        return jsonify(document_json), 201
+        for signer_to_remove in signers_to_remove:
+            document_doc_ref.collection("signers").document(
+                signer_to_remove.id).delete()
+
+        return jsonify(get_merged_document(document_doc_ref)), 201
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -300,6 +472,7 @@ def create_document_signature(customer_id, document_id):
 
 @bp.post("/customers/<customer_id>/documents/<document_id>/signatures/invitations")
 @login_required
+@customer_owner_required
 def send_signature_invitations(customer_id, document_id):
     try:
         user = request.user
@@ -357,6 +530,7 @@ def send_signature_invitations(customer_id, document_id):
 
 @bp.put("/customers/<customer_id>/documents/<document_id>/signatures/invitations/cancel")
 @login_required
+@customer_owner_required
 def cancel_signature_invitations(customer_id, document_id):
     try:
         user = request.user
@@ -404,6 +578,7 @@ def cancel_signature_invitations(customer_id, document_id):
 
 @bp.put("/customers/<customer_id>/documents/<document_id>/signatures/me")
 @login_required
+@customer_owner_required
 def remove_user_signature(customer_id, document_id):
     try:
         user = request.user
@@ -448,6 +623,7 @@ def remove_user_signature(customer_id, document_id):
 
 @bp.post("/customers/<customer_id>/documents/<document_id>/signatures/reminders")
 @login_required
+@customer_owner_required
 def send_signature_reminders(customer_id, document_id):
     try:
         user = request.user
@@ -476,6 +652,7 @@ def send_signature_reminders(customer_id, document_id):
 
 @bp.delete("/customers/<customer_id>/documents/<document_id>/delete")
 @login_required
+@customer_owner_required
 def delete_document(customer_id, document_id):
     try:
         user = request.user
@@ -493,6 +670,7 @@ def delete_document(customer_id, document_id):
 
 @bp.post("/customers/<customer_id>/documents/ai/generate")
 @login_required
+@customer_owner_required
 def ai_generate_document_text(customer_id):
     try:
         user = request.user
