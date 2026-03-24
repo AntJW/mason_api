@@ -368,7 +368,8 @@ def create_document_signature(customer_id, document_id):
             "signatures").document()
         signature_doc_ref.set({
             "signerId": signer_id,
-            "signatureImageStoragePath": signature_image_path
+            "signatureImageStoragePath": signature_image_path,
+            "signedAt": SERVER_TIMESTAMP
         })
 
         # Get existing signature boxes for signer
@@ -742,6 +743,8 @@ def get_merged_document(document_doc_ref):
         for signature_doc in signatures_docs:
             signature_json = signature_doc.to_dict()
             signature_json["id"] = signature_doc.id
+            signature_json["signedAt"] = signature_json.get(
+                "signedAt").isoformat()
             signatures_json.append(signature_json)
         document_json["signatures"] = signatures_json
 
