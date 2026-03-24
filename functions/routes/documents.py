@@ -15,7 +15,9 @@ from clients.llm_client import LLMClient
 from clients.vector_db_client import VectorDBClient
 from logger import logger
 from enum import Enum
+from google.cloud.firestore import And, Or, Increment
 from utility import (
+    datetime_iso_or_none,
     delete_tmp_file,
     delete_from_storage,
     save_file_to_tmp,
@@ -459,6 +461,7 @@ def send_signature_invitations(customer_id, document_id):
                 "status": InvitationStatus.SENT.value,
                 "sentAt": SERVER_TIMESTAMP,
                 "expiresAt": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=14),
+                "reminderCount": 0,
             })
 
         document_doc_ref.update({
@@ -598,16 +601,11 @@ def remove_user_signature(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
-@bp.post("/customers/<customer_id>/documents/<document_id>/signatures/reminders")
+@bp.post("/customers/<customer_id>/documents/<document_id>/signers/<signer_id>/reminder")
 @login_required
 @customer_owner_required
-def send_signature_reminders(customer_id, document_id):
+def send_signature_reminder(customer_id, document_id, signer_id):
     try:
-        user = request.user
-        user_uid = user.get("uid")
-        request_data = request.get_json()
-        signer = request_data.get("signer")
-
         firestore_client: google.cloud.firestore.Client = firestore.client()
 
         document_doc_ref = get_document_ref_for_customer(
@@ -616,11 +614,47 @@ def send_signature_reminders(customer_id, document_id):
         if document_doc_ref.get().to_dict().get("status") == DocumentStatus.COMPLETED.value:
             return jsonify({"error": "Document is already in status 'complete'"}, 400)
 
-        existing_document_json = document_doc_ref.get().to_dict()
+        signer_doc_snapshot = document_doc_ref.collection(
+            "signers").document(signer_id).get()
+        if not signer_doc_snapshot:
+            return jsonify({"error": "Signer not found"}, 404)
 
-        response = EmailClient().send_simple_message(signer.get("email"), "Signature Reminder",
+        signer = signer_doc_snapshot.to_dict()
+        signer_email = signer.get("email")
+        signer_name = signer.get("name")
+
+        # TODO: Add retry logic and error handling for email sending.
+        response = EmailClient().send_simple_message(signer_email, "Signature Reminder",
                                                      "You have a signature request for the document. Please sign it.")
 
+        complex_filter = And(filters=[
+            Or(filters=[
+                FieldFilter("status", "==", InvitationStatus.SENT.value),
+                FieldFilter("status", "==", InvitationStatus.OPENED.value)
+            ]),
+            FieldFilter("signerId", "==", signer_id),
+            FieldFilter("documentId", "==", document_id),
+        ])
+        existing_invitations_snapshots = document_doc_ref.collection("invitations").where(
+            filter=complex_filter).get()
+
+        if existing_invitations_snapshots:
+            existing_invitations_snapshots[0].reference.update({
+                "lastReminderAt": SERVER_TIMESTAMP,
+                "reminderCount": Increment(1),
+            })
+        else:
+            document_doc_ref.collection("invitations").document().set({
+                "signerId": signer_id,
+                "email": signer_email,
+                "name": signer_name,
+                "documentId": document_id,
+                # TODO: Generate token for signer to use to sign the document.
+                "token": "TODO: Generate token for invitation",
+                "status": InvitationStatus.SENT.value,
+                "sentAt": SERVER_TIMESTAMP,
+                "expiresAt": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=14),
+            })
         return jsonify({}), 200
     except Exception as e:
         logger.error(f"error: {e}")
@@ -750,11 +784,10 @@ DocumentStatus = Enum("DocumentStatus", [(
     "DRAFT", "draft"), ("PREPARED", "prepared"), ("SENT", "sent"), ("COMPLETED", "completed")])
 
 InvitationStatus = Enum("InvitationStatus", [("SENT", "sent"), ("OPENED", "opened"), (
-    "COMPLETED", "completed"), ("CANCELED", "canceled"), ("DECLINED", "declined")])
+    "COMPLETED", "completed"), ("CANCELED", "canceled"), ("DECLINED", "declined"), ("EXPIRED", "expired")])
+
 
 # Get merged document helper function
-
-
 def get_merged_document(document_doc_ref):
     try:
         document_json = document_doc_ref.get().to_dict()
@@ -788,6 +821,33 @@ def get_merged_document(document_doc_ref):
                 "signedAt").isoformat()
             signatures_json.append(signature_json)
         document_json["signatures"] = signatures_json
+
+        invitations_docs = document_doc_ref.collection("invitations").get()
+        invitations_json = []
+        for invitation_doc in invitations_docs:
+            invitation_json = invitation_doc.to_dict()
+            invitation_json["id"] = invitation_doc.id
+            invitation_json["sentAt"] = invitation_json.get(
+                "sentAt").isoformat()
+            invitation_json["expiresAt"] = invitation_json.get(
+                "expiresAt").isoformat()
+            invitation_json["openedAt"] = datetime_iso_or_none(
+                invitation_json.get("openedAt"))
+
+            invitation_json["completedAt"] = datetime_iso_or_none(
+                invitation_json.get("completedAt"))
+
+            invitation_json["canceledAt"] = datetime_iso_or_none(
+                invitation_json.get("canceledAt"))
+
+            invitation_json["declinedAt"] = datetime_iso_or_none(
+                invitation_json.get("declinedAt"))
+
+            invitation_json["lastReminderAt"] = datetime_iso_or_none(
+                invitation_json.get("lastReminderAt"))
+
+            invitations_json.append(invitation_json)
+        document_json["invitations"] = invitations_json
 
         return document_json
     except Exception as e:

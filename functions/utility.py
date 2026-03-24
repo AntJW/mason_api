@@ -163,3 +163,7 @@ def find_speaker_optimized(word_start, word_end, segments, start_times):
             break
 
     return assigned_speaker
+
+
+def datetime_iso_or_none(value):
+    return value.isoformat() if value is not None else None
