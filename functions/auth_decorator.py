@@ -5,6 +5,8 @@ import google.cloud.firestore
 from logger import logger
 
 # Custom decorator to verify Firebase Authentication token
+
+
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -35,9 +37,9 @@ def login_required(f):
     return decorated_function
 
 
-# Email link user or Firebase Auth anonymous user required. Used in special cases where 
+# Email link user or Firebase Auth anonymous user required. Used in special cases where
 # an Firebase auth anynomous user can access the api endpoint, like for getting data for
-# the landing page of the website, or from a user invite page. 
+# the landing page of the website, or from a user invite page.
 def login_or_anonymous_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -62,3 +64,32 @@ def login_or_anonymous_required(f):
 
     return decorated_function
 
+
+def customer_owner_required(f):
+    """Require the URL ``customer_id`` to belong to ``request.user`` (Firestore ``userId``).
+
+    Use only below ``@login_required`` so ``request.user`` is set.
+    """
+
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        customer_id = kwargs.get("customer_id")
+        if not customer_id:
+            return jsonify({"error": "Missing customer_id."}), 400
+
+        user_uid = request.user.get("uid")
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        customer_snap = firestore_client.collection("customers").document(
+            customer_id
+        ).get(field_paths=["userId"])
+
+        if not customer_snap.exists:
+            return jsonify({"error": "Customer not found."}), 404
+
+        owner_uid = customer_snap.get("userId")
+        if owner_uid != user_uid:
+            return jsonify({"error": "Forbidden: customer does not belong to this user."}), 403
+
+        return f(*args, **kwargs)
+
+    return decorated_function
