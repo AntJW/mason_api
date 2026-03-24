@@ -1,7 +1,6 @@
 import json
 import os
 import re
-from traceback import print_tb
 import uuid
 
 import google.cloud.firestore
@@ -340,6 +339,7 @@ def update_document_signature_boxes(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
+# Confirmed QA
 @bp.post("/customers/<customer_id>/documents/<document_id>/signatures")
 @login_required
 @customer_owner_required
@@ -378,7 +378,7 @@ def create_document_signature(customer_id, document_id):
 
         # Update signature boxes with signature id
         for signature_box in signature_boxes:
-            signature_box_coll_ref.document(signature_box.id).update({
+            signature_box.reference.update({
                 "signatureId": signature_doc_ref.id
             })
 
@@ -386,22 +386,15 @@ def create_document_signature(customer_id, document_id):
             "signers").document(signer_id).get().to_dict()
 
         all_signature_boxes = signature_box_coll_ref.get()
-        all_signatures = document_doc_ref.collection(
-            "signatures").get()
 
-        all_signatures_ids_with_image_path = [
-            signature.id
-            for signature in all_signatures
-            if signature.to_dict().get("signatureImageStoragePath")
-        ]
-
-        signature_boxes_with_signature_images = [
+        signature_boxes_with_signatures = [
             signature_box
             for signature_box in all_signature_boxes
-            if signature_box.to_dict().get("signatureId") in all_signatures_ids_with_image_path
+            if signature_box.to_dict().get("signatureId")
         ]
 
-        if len(signature_boxes_with_signature_images) == len(all_signature_boxes):
+        # Update document status if applicable
+        if len(signature_boxes_with_signatures) == len(all_signature_boxes):
             document_doc_ref.update({
                 "status": "complete"
             })
@@ -410,22 +403,8 @@ def create_document_signature(customer_id, document_id):
                 "status": "prepared"
             })
 
-        # Remove signers that don't have a matching signature box. This is to ensure
-        # that the signers list is up to date, once signatures are added.
-        signers = document_doc_ref.collection("signers").list_documents()
-        all_signature_boxes_signer_ids = set(
-            signature_box.to_dict().get("signerId")
-            for signature_box in all_signature_boxes
-        )
-
-        signers_to_remove = []
-        for signer in signers:
-            if signer.id not in all_signature_boxes_signer_ids:
-                signers_to_remove.append(signer)
-
-        for signer_to_remove in signers_to_remove:
-            document_doc_ref.collection("signers").document(
-                signer_to_remove.id).delete()
+        # Clean up signers without matching signature boxes.
+        remove_signers_without_matching_signature_boxes(document_doc_ref)
 
         return jsonify(get_merged_document(document_doc_ref)), 201
     except Exception as e:
@@ -433,6 +412,7 @@ def create_document_signature(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
+# Confirmed QA
 @bp.post("/customers/<customer_id>/documents/<document_id>/signatures/invitations")
 @login_required
 @customer_owner_required
@@ -440,57 +420,43 @@ def send_signature_invitations(customer_id, document_id):
     try:
         user = request.user
         user_uid = user.get("uid")
-        request_data = request.get_json()
-        subject = request_data.get("subject")
-        body = request_data.get("body")
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
 
-        document_doc_ref = firestore_client.collection(
-            "documents").document(document_id)
+        document_doc_ref = get_document_ref_for_customer(
+            firestore_client, customer_id, document_id)
+
+        if not document_doc_ref:
+            return jsonify({"error": "Document not found"}, 404)
 
         if document_doc_ref.get().to_dict().get("status") == "complete":
             return jsonify({"error": "Document is already in status 'complete'"}, 400)
 
-        existing_document_json = document_doc_ref.get().to_dict()
+        # Clean up signers without matching signature boxes.
+        remove_signers_without_matching_signature_boxes(document_doc_ref)
 
-        signature_boxes_signer_ids = [signature_box.get(
-            "signerId") for signature_box in existing_document_json.get("signatureBoxes")]
-        signers = existing_document_json.get("signers")
+        # Recipients list: all signers that are not the current_user / contractor.
+        recipients = set(signer.to_dict().get("email") for signer in document_doc_ref.collection(
+            "signers").get() if signer.to_dict().get("userId", None) != user_uid)
 
-        recipients = [signer.get("email") for signer in signers if signer.get(
-            "id") in signature_boxes_signer_ids]
-
+        subject = "New document ready for you to sign"
+        body = "Contractor has a document ready for you to sign. Please sign it electronically, by clicking the link below:"
         for recipient in recipients:
-            response = EmailClient().send_simple_message(recipient, subject, body)
+            response = EmailClient().send_simple_message(
+                recipient, subject, body)
+            # TODO: Add retry logic and error handling for email sending.
 
         document_doc_ref.update({
             "status": "sent"
         })
 
-        # Remove signers that don't have a matching signature box. This is to ensure
-        # that the signers list is up to date, once invitations are sent.
-        signers = existing_document_json.get("signers") or []
-        signature_boxes = existing_document_json.get("signatureBoxes") or []
-        if len(signers) != len(signature_boxes):
-            signature_boxes_signer_ids = [signature_box.get(
-                "signerId") for signature_box in signature_boxes]
-            signers = [signer for signer in signers if signer.get(
-                "id") in signature_boxes_signer_ids]
-            document_doc_ref.update({
-                "signers": signers
-            })
-
-        document_json = document_doc_ref.get().to_dict()
-        document_json["id"] = document_id
-        document_json["createdAt"] = document_json.get(
-            "createdAt").isoformat()
-        return jsonify(document_json), 200
+        return jsonify(get_merged_document(document_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
 
 
+# Confirmed QA
 @bp.put("/customers/<customer_id>/documents/<document_id>/signatures/invitations/cancel")
 @login_required
 @customer_owner_required
@@ -500,40 +466,33 @@ def cancel_signature_invitations(customer_id, document_id):
         user_uid = user.get("uid")
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
-        document_doc_ref = firestore_client.collection(
-            "documents").document(document_id)
+        document_doc_ref = get_document_ref_for_customer(
+            firestore_client, customer_id, document_id)
 
-        existing_document_json = document_doc_ref.get().to_dict()
-        updated_signature_boxes = []
-        for signature_box in existing_document_json.get("signatureBoxes") or []:
+        if not document_doc_ref:
+            return jsonify({"error": "Document not found"}, 404)
 
-            # delete signature image from storage if exists
-            if signature_box.get("signatureImageStoragePath"):
-                delete_from_storage(signature_box.get(
-                    "signatureImageStoragePath"))
+        if document_doc_ref.get().to_dict().get("status") == "complete":
+            return jsonify({"error": "Document is already in status 'complete'"}, 400)
 
-                signature_box['signatureImageStoragePath'] = None
-
-            updated_signature_boxes.append(signature_box)
+        # Remove signatures, and their references from signature boxes
+        remove_all_document_signatures(document_doc_ref)
 
         # update document status to draft
         document_doc_ref.update({
-            "signatureBoxes": updated_signature_boxes,
             "status": "draft"
         })
 
+        # Recipients list: all signers that are not the current_user / contractor.
+        recipients = set(signer.to_dict().get("email") for signer in document_doc_ref.collection(
+            "signers").get() if signer.to_dict().get("userId", None) != user_uid)
         # send email to all signers to cancelling signature request
-        signers = existing_document_json.get("signers") or []
-        recipients = [signer.get("email") for signer in signers]
         for recipient in recipients:
+            # TODO: Add retry logic and error handling for email sending.
             response = EmailClient().send_simple_message(recipient, "Signature Request Cancelled",
                                                          "The signature request for the document has been cancelled.")
 
-        document_json = document_doc_ref.get().to_dict()
-        document_json["id"] = document_id
-        document_json["createdAt"] = document_json.get(
-            "createdAt").isoformat()
-        return jsonify(document_json), 200
+        return jsonify(get_merged_document(document_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -617,8 +576,8 @@ def send_signature_reminders(customer_id, document_id):
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
 
-        document_doc_ref = firestore_client.collection(
-            "documents").document(document_id)
+        document_doc_ref = get_document_ref_for_customer(
+            firestore_client, customer_id, document_id)
 
         if document_doc_ref.get().to_dict().get("status") == "complete":
             return jsonify({"error": "Document is already in status 'complete'"}, 400)
@@ -634,17 +593,22 @@ def send_signature_reminders(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
+# Confirmed QA
 @bp.delete("/customers/<customer_id>/documents/<document_id>/delete")
 @login_required
 @customer_owner_required
 def delete_document(customer_id, document_id):
     try:
-        user = request.user
-        user_uid = user.get("uid")
-
         firestore_client: google.cloud.firestore.Client = firestore.client()
-        document_doc_ref = firestore_client.collection(
-            "documents").document(document_id)
+        document_doc_ref = get_document_ref_for_customer(
+            firestore_client, customer_id, document_id)
+
+        if not document_doc_ref:
+            return jsonify({"error": "Document not found"}, 404)
+
+        if document_doc_ref.get().to_dict().get("status") in ("prepared", "sent", "complete"):
+            return jsonify({"error": "Document not eligible for deletion due to it's current status."}, 400)
+
         document_doc_ref.delete()
         return jsonify({}), 200
     except Exception as e:
@@ -802,3 +766,39 @@ def get_document_ref_for_customer(firestore_client, customer_id, document_id):
     except Exception as e:
         logger.error(f"error: {e}")
         return None
+
+
+# Remove signers that don't have a matching signature box. This is to ensure
+# that the signers list is up to date, once signatures are added.
+def remove_signers_without_matching_signature_boxes(document_doc_ref):
+    try:
+        all_signature_boxes = document_doc_ref.collection(
+            "signatureBoxes").get()
+        all_signature_boxes_signer_ids = set(
+            signature_box.to_dict().get("signerId")
+            for signature_box in all_signature_boxes
+        )
+        for signer in document_doc_ref.collection("signers").list_documents():
+            if signer.id not in all_signature_boxes_signer_ids:
+                signer.delete()
+    except Exception as e:
+        logger.error(f"error: {e}")
+
+
+def remove_all_document_signatures(document_doc_ref):
+    signatures_doc_refs = document_doc_ref.collection(
+        "signatures").list_documents()
+    for signature in signatures_doc_refs:
+        data = signature.get().to_dict() or {}
+        image_storage_path = data.get("signatureImageStoragePath")
+        if image_storage_path:
+            delete_from_storage(image_storage_path)
+            signature.delete()
+
+    signatures_boxes_doc_refs = document_doc_ref.collection(
+        "signatureBoxes").list_documents()
+
+    for signature_box in signatures_boxes_doc_refs:
+        signature_box.update({
+            "signatureId": None
+        })
