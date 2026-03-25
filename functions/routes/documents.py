@@ -27,7 +27,6 @@ from utility import (
 bp = Blueprint("documents", __name__)
 
 
-# Confirmed QA
 @bp.post("/customers/<customer_id>/documents/create")
 @login_required
 @customer_owner_required
@@ -93,7 +92,6 @@ def create_document(customer_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Confirmed QA
 @bp.get("/customers/<customer_id>/documents")
 @login_required
 @customer_owner_required
@@ -113,7 +111,6 @@ def get_documents(customer_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Confirmed QA
 @bp.get("/customers/<customer_id>/documents/<document_id>")
 @login_required
 @customer_owner_required
@@ -132,7 +129,6 @@ def get_document(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Confirmed QA
 @bp.put("/customers/<customer_id>/documents/<document_id>/update")
 @login_required
 @customer_owner_required
@@ -162,7 +158,6 @@ def update_document(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Confirmed QA
 @bp.post("/customers/<customer_id>/documents/<document_id>/signers")
 @login_required
 @customer_owner_required
@@ -199,7 +194,6 @@ def create_document_signer(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Confirmed QA
 @bp.delete("/customers/<customer_id>/documents/<document_id>/signers/<signer_id>")
 @login_required
 @customer_owner_required
@@ -231,27 +225,6 @@ def delete_document_signer(customer_id, document_id, signer_id):
             if sid:
                 signature_ids.add(sid)
 
-        # # TODO: I think this is safe to remove in this endpoint. Signers should not have signatures / signature images
-        # # during the execution of this endpoint. When document is signature request canceled,
-        # # is when signatures images if they exists, should be deleted. Keep for reference, but I might relocate this to a different endpoint.
-        # signature_image_storage_paths = []
-        # if signature_ids:
-        #     sig_refs = [
-        #         document_doc_ref.collection("signatures").document(sid)
-        #         for sid in signature_ids
-        #     ]
-        #     for sig_snap in firestore_client.get_all(sig_refs):
-        #         if not sig_snap.exists:
-        #             continue
-        #         path = (sig_snap.to_dict() or {}).get(
-        #             "signatureImageStoragePath")
-        #         if path:
-        #             signature_image_storage_paths.append(path)
-
-        # # Delete signature images from storage
-        # for signature_image_storage_path in signature_image_storage_paths:
-        #     delete_from_storage(signature_image_storage_path)
-
         # Batch delete signature boxes
         batch.commit()
 
@@ -264,7 +237,6 @@ def delete_document_signer(customer_id, document_id, signer_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Confirmed QA
 @bp.put("/customers/<customer_id>/documents/<document_id>/signers/<signer_id>")
 @login_required
 @customer_owner_required
@@ -304,7 +276,6 @@ def update_document_signer(customer_id, document_id, signer_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Confirmed QA
 @bp.put("/customers/<customer_id>/documents/<document_id>/signature-boxes")
 @login_required
 @customer_owner_required
@@ -339,7 +310,6 @@ def update_document_signature_boxes(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Confirmed QA
 @bp.post("/customers/<customer_id>/documents/<document_id>/signatures")
 @login_required
 @customer_owner_required
@@ -413,7 +383,6 @@ def create_document_signature(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Confirmed QA
 @bp.post("/customers/<customer_id>/documents/<document_id>/signatures/invitations")
 @login_required
 @customer_owner_required
@@ -474,7 +443,6 @@ def send_signature_invitations(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Confirmed QA
 @bp.put("/customers/<customer_id>/documents/<document_id>/signatures/invitations/cancel")
 @login_required
 @customer_owner_required
@@ -535,7 +503,6 @@ def cancel_signature_invitations(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Confirmed QA
 @bp.put("/customers/<customer_id>/documents/<document_id>/signatures/me")
 @login_required
 @customer_owner_required
@@ -601,7 +568,6 @@ def remove_user_signature(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Confirmed QA
 @bp.post("/customers/<customer_id>/documents/<document_id>/signers/<signer_id>/reminder")
 @login_required
 @customer_owner_required
@@ -631,7 +597,8 @@ def send_signature_reminder(customer_id, document_id, signer_id):
             ]),
             FieldFilter("signerId", "==", signer_id),
             FieldFilter("documentId", "==", document_id),
-            FieldFilter("expiresAt", ">", SERVER_TIMESTAMP),
+            FieldFilter("expiresAt", ">", datetime.datetime.now(
+                datetime.timezone.utc)),
         ])
         existing_invitations_snapshots = document_doc_ref.collection("invitations").where(
             filter=complex_filter).get()
@@ -658,8 +625,7 @@ def send_signature_reminder(customer_id, document_id, signer_id):
                 "email": signer_email,
                 "name": signer_name,
                 "documentId": document_id,
-                # TODO: Generate token for signer to use to sign the document.
-                "token": "TODO: Generate token for invitation",
+                "token": token,
                 "status": InvitationStatus.SENT.value,
                 "sentAt": SERVER_TIMESTAMP,
                 "expiresAt": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=14),
@@ -670,7 +636,6 @@ def send_signature_reminder(customer_id, document_id, signer_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Confirmed QA
 @bp.delete("/customers/<customer_id>/documents/<document_id>/delete")
 @login_required
 @customer_owner_required
