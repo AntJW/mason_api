@@ -6,7 +6,6 @@ import tempfile
 from firebase_admin import storage
 import subprocess
 import bisect
-import numpy as np
 
 
 def is_valid_email(email: str) -> bool:
