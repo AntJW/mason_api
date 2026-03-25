@@ -840,6 +840,16 @@ def get_merged_document(document_doc_ref):
             invitations_json.append(invitation_json)
         document_json["invitations"] = invitations_json
 
+        audit_logs_docs = document_doc_ref.collection("auditLogs").get()
+        audit_logs_json = []
+        for audit_log_doc in audit_logs_docs:
+            audit_log_json = audit_log_doc.to_dict()
+            audit_log_json["id"] = audit_log_doc.id
+            audit_log_json["timestamp"] = audit_log_json.get(
+                "timestamp").isoformat()
+            audit_logs_json.append(audit_log_json)
+        document_json["auditLogs"] = audit_logs_json
+
         return document_json
     except Exception as e:
         logger.error(f"error: {e}")
