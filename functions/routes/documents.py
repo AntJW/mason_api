@@ -15,7 +15,7 @@ from clients.llm_client import LLMClient
 from clients.vector_db_client import VectorDBClient
 from logger import logger
 from enum import Enum
-from google.cloud.firestore import And, Or, Increment
+from google.cloud.firestore import And, Or, Increment, DocumentReference
 from utility import (
     datetime_iso_or_none,
     delete_tmp_file,
@@ -85,6 +85,11 @@ def create_document(customer_id):
                 "color": 4283417505,  # aqua green color
                 "customerId": customer_id
             })
+
+        create_document_audit_log(document_doc_ref, action=AuditLogAction.DOCUMENT_CREATED.value, actor_role=AuditLogActorRole.USER.value,
+                                  target_id=document_doc_ref.id, target_type=AuditLogTargetType.DOCUMENT.value, actor_id=user_uid, actor_email=user.get(
+                                      "email"),
+                                  actor_name=user.get("name"), ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         return jsonify(get_merged_document(document_doc_ref)), 201
     except Exception as e:
@@ -651,6 +656,9 @@ def delete_document(customer_id, document_id):
         if document_doc_ref.get().to_dict().get("status") in (DocumentStatus.PREPARED.value, DocumentStatus.SENT.value, DocumentStatus.COMPLETED.value):
             return jsonify({"error": "Document not eligible for deletion due to it's current status."}, 400)
 
+        # TODO: Check document audit logs to determine if it previously had signatures. If so,
+        # archive this document, instead of deleting it. status = "archived"
+
         document_doc_ref.delete()
         return jsonify({}), 200
     except Exception as e:
@@ -754,11 +762,20 @@ def ai_generate_document_text(customer_id):
 # Helper functions
 # ------------------------------------------------------------------------------------------------
 
-DocumentStatus = Enum("DocumentStatus", [(
-    "DRAFT", "draft"), ("PREPARED", "prepared"), ("SENT", "sent"), ("COMPLETED", "completed")])
+class DocumentStatus(str, Enum):
+    DRAFT = "draft"
+    PREPARED = "prepared"
+    SENT = "sent"
+    COMPLETED = "completed"
 
-InvitationStatus = Enum("InvitationStatus", [("SENT", "sent"), ("OPENED", "opened"), (
-    "COMPLETED", "completed"), ("CANCELED", "canceled"), ("DECLINED", "declined"), ("EXPIRED", "expired")])
+
+class InvitationStatus(str, Enum):
+    SENT = "sent"
+    OPENED = "opened"
+    COMPLETED = "completed"
+    CANCELED = "canceled"
+    DECLINED = "declined"
+    EXPIRED = "expired"
 
 
 # Get merged document helper function
@@ -881,5 +898,60 @@ def remove_all_document_signatures(document_doc_ref):
             signature_box.update({
                 "signatureId": None
             })
+    except Exception as e:
+        logger.error(f"error: {e}")
+
+
+class AuditLogAction(str, Enum):
+    DOCUMENT_CREATED = "documentCreated"
+    DOCUMENT_UPDATED = "documentUpdated"
+    DOCUMENT_DELETED = "documentDeleted"
+    DOCUMENT_COMPLETED = "documentCompleted"
+    INVITATION_SENT = "invitationSent"
+    INVITATION_RESENT = "invitationResent"
+    INVITATION_OPENED = "invitationOpened"
+    INVITATION_EXPIRED = "invitationExpired"
+    SIGNATURE_DECLINED = "signatureDeclined"
+    SIGNATURE_COMPLETED = "signatureCompleted"
+
+
+class AuditLogActorRole(str, Enum):
+    USER = "user"
+    SIGNER = "signer"
+    SYSTEM = "system"
+
+
+class AuditLogTargetType(str, Enum):
+    DOCUMENT = "document"
+    INVITATION = "invitation"
+    SIGNATURE = "signature"
+
+
+def create_document_audit_log(document_doc_ref: DocumentReference, action: AuditLogAction, actor_role: AuditLogActorRole, target_id: str, target_type: AuditLogTargetType,
+                              actor_id: str = None, actor_email: str = None, actor_name: str = None, ip_address: str = None,
+                              user_agent: str = None, metadata_reason: str = None, metadata_method: str = None):
+    try:
+        audit_log_doc_ref = document_doc_ref.collection("auditLogs").document()
+        audit_log_doc_ref.set({
+            "documentId": document_doc_ref.id,
+            "timestamp": SERVER_TIMESTAMP,
+            "action": action,
+            "actor": {
+                "id": actor_id,
+                "role": actor_role,
+                "name": actor_name,
+                "email": actor_email,
+                "ipAddress": ip_address,  # endpoint request object request.remote_addr
+                "userAgent": user_agent,  # endpoint request object request.user_agent.string
+            },
+            "target": {
+                "id": target_id,
+                "type": target_type,
+            },
+            "metadata": {
+                "reason": metadata_reason,
+                "method": metadata_method,
+            },
+        })
     except Exception as e:
         logger.error(f"error: {e}")
