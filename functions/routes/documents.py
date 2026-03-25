@@ -601,6 +601,7 @@ def remove_user_signature(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
+# Confirmed QA
 @bp.post("/customers/<customer_id>/documents/<document_id>/signers/<signer_id>/reminder")
 @login_required
 @customer_owner_required
@@ -623,10 +624,6 @@ def send_signature_reminder(customer_id, document_id, signer_id):
         signer_email = signer.get("email")
         signer_name = signer.get("name")
 
-        # TODO: Add retry logic and error handling for email sending.
-        response = EmailClient().send_simple_message(signer_email, "Signature Reminder",
-                                                     "You have a signature request for the document. Please sign it.")
-
         complex_filter = And(filters=[
             Or(filters=[
                 FieldFilter("status", "==", InvitationStatus.SENT.value),
@@ -634,9 +631,21 @@ def send_signature_reminder(customer_id, document_id, signer_id):
             ]),
             FieldFilter("signerId", "==", signer_id),
             FieldFilter("documentId", "==", document_id),
+            FieldFilter("expiresAt", ">", SERVER_TIMESTAMP),
         ])
         existing_invitations_snapshots = document_doc_ref.collection("invitations").where(
             filter=complex_filter).get()
+
+        # Get token for reminder invitation. If no existing invitations, generate new token.
+        if existing_invitations_snapshots:
+            token = existing_invitations_snapshots[0].to_dict().get("token")
+        else:
+            # TODO: Generate new token for reminder invitation
+            token = "TODO: Generate new token for reminder invitation"
+
+        # TODO: Add retry logic and error handling for email sending.
+        response = EmailClient().send_simple_message(signer_email, "Signature Reminder",
+                                                     "You have a signature request for the document. Please sign it.")
 
         if existing_invitations_snapshots:
             existing_invitations_snapshots[0].reference.update({
@@ -890,19 +899,22 @@ def remove_signers_without_matching_signature_boxes(document_doc_ref):
 
 
 def remove_all_document_signatures(document_doc_ref):
-    signatures_doc_refs = document_doc_ref.collection(
-        "signatures").list_documents()
-    for signature in signatures_doc_refs:
-        data = signature.get().to_dict() or {}
-        image_storage_path = data.get("signatureImageStoragePath")
-        if image_storage_path:
-            delete_from_storage(image_storage_path)
-            signature.delete()
+    try:
+        signatures_doc_refs = document_doc_ref.collection(
+            "signatures").list_documents()
+        for signature in signatures_doc_refs:
+            data = signature.get().to_dict() or {}
+            image_storage_path = data.get("signatureImageStoragePath")
+            if image_storage_path:
+                delete_from_storage(image_storage_path)
+                signature.delete()
 
-    signatures_boxes_doc_refs = document_doc_ref.collection(
-        "signatureBoxes").list_documents()
+        signatures_boxes_doc_refs = document_doc_ref.collection(
+            "signatureBoxes").list_documents()
 
-    for signature_box in signatures_boxes_doc_refs:
-        signature_box.update({
-            "signatureId": None
-        })
+        for signature_box in signatures_boxes_doc_refs:
+            signature_box.update({
+                "signatureId": None
+            })
+    except Exception as e:
+        logger.error(f"error: {e}")
