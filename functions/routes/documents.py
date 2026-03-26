@@ -736,15 +736,12 @@ def ai_generate_document_text(customer_id):
         system_parts.extend(["", "---", "Output valid JSON only."])
         system_message = "\n".join(system_parts)
 
-        llm_client = LLMClient().client
+        llm_client = LLMClient()
 
-        response = llm_client.messages.create(
-            model=os.getenv("LLM_MODEL"),
-            max_tokens=4096,
+        response_text = llm_client.create_message(
             system=system_message,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": prompt}]
         )
-        response_text = response.content[0].text
 
         # Remove ```json fences
         cleaned_response_text = re.sub(

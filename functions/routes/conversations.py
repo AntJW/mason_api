@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import uuid
 from enum import Enum
 from itertools import chain
@@ -196,37 +197,46 @@ def summarize_conversation(customer_id, conversation_id):
         for segment in transcript:
             merged_segments_string += f"{segment.get('speaker')}: {segment.get('text')}\n"
 
-        llm_client = LLMClient().client
-
-        llm_response = llm_client.generate(
-            model=os.getenv("LLM_MODEL"),
-            stream=False,
-            system=(
-                "You are a summarization assistant.\n\n"
-                "Provide:\n"
-                "1. header: 2-5 word title\n"
-                "2. summary: Bullet point summary (plain text, use - for bullets, max 7-10 points)\n"
-                "   - Include action items as bullet points at the end\n"
-                "3. summaryMarkdown: Same content as summary but formatted with markdown:\n"
-                "   - No markdown headers, only bold text\n"
-                "   - Include **Action Items:** as section at the end if there are any action items\n"
-                "   - Use * for bullet points\n"
-                "   - Add two newlines (blank line) between sections\n\n"
-                "Output valid JSON only."
-            ),
-            prompt=merged_segments_string,
-            format={
-                "type": "object",
-                "properties": {
-                    "header": {"type": "string"},
-                    "summary": {"type": "string"},
-                    "summaryMarkdown": {"type": "string"}
-                },
-                "required": ["header", "summary", "summaryMarkdown"]
-            }
+        system_message = (
+            "You are a summarization assistant.\n\n"
+            "Provide:\n"
+            "1. header: 2-5 word title\n"
+            "2. summary: Bullet point summary (plain text, use - for bullets, max 7-10 points)\n"
+            "   - Include action items as bullet points at the end\n"
+            "3. summaryMarkdown: Same content as summary but formatted with markdown:\n"
+            "   - No markdown headers, only bold text\n"
+            "   - Include **Action Items:** as section at the end if there are any action items\n"
+            "   - Use * for bullet points\n"
+            "   - Add two newlines (blank line) between sections\n\n"
+            "Output valid JSON only with keys header, summary, and summaryMarkdown."
         )
 
-        llm_api_response_json = json.loads(llm_response["response"])
+        llm_client = LLMClient()
+        output_config = {
+            "format": {
+                "type": "json_schema",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "header": {"type": "string"},
+                        "summary": {"type": "string"},
+                        "summaryMarkdown": {"type": "string"},
+                    },
+                    "required": ["header", "summary", "summaryMarkdown"],
+                    "additionalProperties": False,
+                },
+            }
+        }
+        response_text = llm_client.create_message(
+            system=system_message,
+            messages=[{"role": "user", "content": merged_segments_string}],
+            output_config=output_config
+        )
+
+        cleaned_response_text = re.sub(
+            r"```json|```", "", response_text).strip()
+
+        llm_api_response_json = json.loads(cleaned_response_text)
 
         summary_delta = convert_markdown_to_delta(
             llm_api_response_json["summaryMarkdown"])
@@ -433,41 +443,16 @@ def ai_chat(customer_id):
             {past_conversations}
         """
 
-        # Add system message.
-        messages.insert(0,
-                        {
-                            "role": "system",
-                            "content": content
-                        })
+        api_messages = [
+            {"role": m["role"], "content": m["content"]}
+            for m in messages
+            if m.get("role") in ("user", "assistant")
+        ]
 
-        llm_client = LLMClient().client
+        llm_client = LLMClient()
 
         def generate():
-            first_chunk = True  # Track the first piece of content
-
-            # Make streaming request using ollama client
-            stream = llm_client.chat(
-                model=os.getenv("LLM_MODEL"),
-                messages=messages,
-                stream=True
-            )
-
-            # Parse streaming response from ollama
-            for chunk in stream:
-                if chunk:
-                    try:
-                        message = chunk.get('message', {})
-                        content = message.get('content', '')
-                        if content:
-                            if first_chunk:
-                                # Remove only leading newlines in the first chunk
-                                message["content"] = content.lstrip('\n')
-                            first_chunk = False
-                            # Format as Server-Sent Events (SSE)
-                            yield f"{json.dumps({"role": message.get("role"), "content": message.get("content")})}"
-                    except (KeyError, AttributeError) as e:
-                        # Skip invalid chunks
-                        continue
+            yield from llm_client.stream_message(system=content, messages=api_messages)
 
         return Response(stream_with_context(generate()), mimetype='text/event-stream')
     except Exception as e:
