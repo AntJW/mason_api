@@ -3,6 +3,7 @@ import os
 import re
 import uuid
 import datetime
+import secrets
 import google.cloud.firestore
 from firebase_admin import firestore
 from flask import Blueprint, jsonify, request
@@ -125,7 +126,7 @@ def get_document(customer_id, document_id):
         document_doc_ref = get_document_ref_for_customer(
             firestore_client, customer_id, document_id)
 
-        if not document_doc_ref:
+        if not document_doc_ref.get().exists:
             return jsonify({"error": "Document not found"}, 404)
 
         return jsonify(get_merged_document(document_doc_ref)), 200
@@ -148,7 +149,7 @@ def update_document(customer_id, document_id):
         document_doc_ref = get_document_ref_for_customer(
             firestore_client, customer_id, document_id)
 
-        if not document_doc_ref:
+        if not document_doc_ref.get().exists:
             return jsonify({"error": "Document not found"}, 404)
 
         document_doc_ref.update({
@@ -178,7 +179,7 @@ def create_document_signer(customer_id, document_id):
         document_doc_ref = get_document_ref_for_customer(
             firestore_client, customer_id, document_id)
 
-        if not document_doc_ref:
+        if not document_doc_ref.get().exists:
             return jsonify({"error": "Document not found"}, 404)
 
         signers_docs = document_doc_ref.collection("signers").where(
@@ -209,7 +210,7 @@ def delete_document_signer(customer_id, document_id, signer_id):
         document_doc_ref = get_document_ref_for_customer(
             firestore_client, customer_id, document_id)
 
-        if not document_doc_ref:
+        if not document_doc_ref.get().exists:
             return jsonify({"error": "Document not found"}, 404)
 
         signer_doc_ref = document_doc_ref.collection(
@@ -259,7 +260,7 @@ def update_document_signer(customer_id, document_id, signer_id):
         document_doc_ref = get_document_ref_for_customer(
             firestore_client, customer_id, document_id)
 
-        if not document_doc_ref:
+        if not document_doc_ref.get().exists:
             return jsonify({"error": "Document not found"}, 404)
 
         signer_doc_ref = document_doc_ref.collection(
@@ -294,7 +295,7 @@ def update_document_signature_boxes(customer_id, document_id):
         document_doc_ref = get_document_ref_for_customer(
             firestore_client, customer_id, document_id)
 
-        if not document_doc_ref:
+        if not document_doc_ref.get().exists:
             return jsonify({"error": "Document not found"}, 404)
 
         signature_boxes_coll_ref = document_doc_ref.collection(
@@ -329,7 +330,7 @@ def create_document_signature(customer_id, document_id):
         document_doc_ref = get_document_ref_for_customer(
             firestore_client, customer_id, document_id)
 
-        if not document_doc_ref:
+        if not document_doc_ref.get().exists:
             return jsonify({"error": "Document not found"}, 404)
 
         # Upload signature image to storage
@@ -401,7 +402,7 @@ def send_signature_invitations(customer_id, document_id):
         document_doc_ref = get_document_ref_for_customer(
             firestore_client, customer_id, document_id)
 
-        if not document_doc_ref:
+        if not document_doc_ref.get().exists:
             return jsonify({"error": "Document not found"}, 404)
 
         if document_doc_ref.get().to_dict().get("status") == DocumentStatus.COMPLETED.value:
@@ -421,17 +422,19 @@ def send_signature_invitations(customer_id, document_id):
             recipient_email = recipient.to_dict().get("email")
             recipient_name = recipient.to_dict().get("name")
 
-            response = EmailClient().send_simple_message(
-                recipient_email, subject, body)
+            token = create_signing_token()
+            signing_url = create_signing_url(token, document_id)
+
             # TODO: Add retry logic and error handling for email sending.
+            response = EmailClient().send_simple_message(
+                recipient_email, subject, body + "\n\n" + signing_url)
 
             document_doc_ref.collection("invitations").document().set({
                 "signerId": signer_id,
                 "email": recipient_email,
                 "name": recipient_name,
                 "documentId": document_id,
-                # TODO: Generate token for signer to use to sign the document.
-                "token": "TODO: Generate token",
+                "token": token,
                 "status": InvitationStatus.SENT.value,
                 "sentAt": SERVER_TIMESTAMP,
                 "expiresAt": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=14),
@@ -460,7 +463,7 @@ def cancel_signature_invitations(customer_id, document_id):
         document_doc_ref = get_document_ref_for_customer(
             firestore_client, customer_id, document_id)
 
-        if not document_doc_ref:
+        if not document_doc_ref.get().exists:
             return jsonify({"error": "Document not found"}, 404)
 
         if document_doc_ref.get().to_dict().get("status") == DocumentStatus.COMPLETED.value:
@@ -488,10 +491,17 @@ def cancel_signature_invitations(customer_id, document_id):
             response = EmailClient().send_simple_message(recipient_email, "Signature Request Canceled",
                                                          "The signature request for the document has been canceled.")
 
+            complex_filter = And(filters=[
+                Or(filters=[
+                    FieldFilter("status", "==", InvitationStatus.SENT.value),
+                    FieldFilter("status", "==", InvitationStatus.OPENED.value),
+                ]),
+                FieldFilter("signerId", "==", signer_id),
+                FieldFilter("documentId", "==", document_id),
+            ])
             # Update invitations status to canceled
             invitation_doc_snapshots = document_doc_ref.collection("invitations").where(
-                filter=FieldFilter("signerId", "==", signer_id)).where(
-                filter=FieldFilter("documentId", "==", document_id)).get()
+                filter=complex_filter).get()
 
             for invitation_doc_snapshot in invitation_doc_snapshots:
                 batch.update(invitation_doc_snapshot.reference, {
@@ -520,7 +530,7 @@ def remove_user_signature(customer_id, document_id):
         document_doc_ref = get_document_ref_for_customer(
             firestore_client, customer_id, document_id)
 
-        if not document_doc_ref:
+        if not document_doc_ref.get().exists:
             return jsonify({"error": "Document not found"}, 404)
 
         existing_document_json = document_doc_ref.get().to_dict()
@@ -612,12 +622,13 @@ def send_signature_reminder(customer_id, document_id, signer_id):
         if existing_invitations_snapshots:
             token = existing_invitations_snapshots[0].to_dict().get("token")
         else:
-            # TODO: Generate new token for reminder invitation
-            token = "TODO: Generate new token for reminder invitation"
+            token = create_signing_token()
+
+        signing_url = create_signing_url(token, document_id)
 
         # TODO: Add retry logic and error handling for email sending.
         response = EmailClient().send_simple_message(signer_email, "Signature Reminder",
-                                                     "You have a signature request for the document. Please sign it.")
+                                                     "You have a signature request for the document. Please sign it. " + signing_url)
 
         if existing_invitations_snapshots:
             existing_invitations_snapshots[0].reference.update({
@@ -650,7 +661,7 @@ def delete_document(customer_id, document_id):
         document_doc_ref = get_document_ref_for_customer(
             firestore_client, customer_id, document_id)
 
-        if not document_doc_ref:
+        if not document_doc_ref.get().exists:
             return jsonify({"error": "Document not found"}, 404)
 
         if document_doc_ref.get().to_dict().get("status") in (DocumentStatus.PREPARED.value, DocumentStatus.SENT.value, DocumentStatus.COMPLETED.value):
@@ -755,9 +766,37 @@ def ai_generate_document_text(customer_id):
         return jsonify({"error": str(e)}), 500
 
 
-# ------------------------------------------------------------------------------------------------
-# Helper functions
-# ------------------------------------------------------------------------------------------------
+@bp.get("/documents/<document_id>/signing-requests/<token>")
+def get_signing_document(document_id, token):
+    try:
+        firestore_client = firestore.client()
+
+        document_doc_ref = firestore_client.collection(
+            "documents").document('123')
+
+        if not document_doc_ref.get().exists:
+            print("Document not found ================================================")
+
+        # Get document invitation by token
+        # Ensure invitation is valid and not expired
+        # If valid, get document
+        # audit log that the invitation was opened for signer
+        # return document
+
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.post("/documents/<document_id>/signing-requests/<token>/signature")
+# @signing_token_required
+def submit_signature(signing_token):
+    pass
+
+    # ------------------------------------------------------------------------------------------------
+    # Helper functions
+    # ------------------------------------------------------------------------------------------------
+
 
 class DocumentStatus(str, Enum):
     DRAFT = "draft"
@@ -962,3 +1001,11 @@ def create_document_audit_log(document_doc_ref: DocumentReference, action: Audit
         })
     except Exception as e:
         logger.error(f"error: {e}")
+
+
+def create_signing_token():
+    return secrets.token_urlsafe(32)
+
+
+def create_signing_url(token: str, document_id: str):
+    return f"https://{os.getenv('DOMAIN')}/sign?token={token}?documentId={document_id}"

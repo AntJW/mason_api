@@ -16,7 +16,7 @@ register_routes(app)
 @https_fn.on_request(
     cors=options.CorsOptions(
         cors_origins=[origin.strip()
-                      for origin in os.getenv("CORS_ORIGINS", "").split(",")],
+                      for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip()],
         cors_methods=["get", "post", "put", "delete"],
     ),
     secrets=[],
