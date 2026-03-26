@@ -93,3 +93,23 @@ def customer_owner_required(f):
         return f(*args, **kwargs)
 
     return decorated_function
+
+
+# TODO: Finish this decorator
+def signing_token_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        signing_token = kwargs.get("signing_token")
+        if not signing_token:
+            return jsonify({"error": "Unauthorized"}), 401
+
+        firestore_client = firestore.client()
+        try:
+            token_data = validate_signing_token(
+                firestore_client, signing_token)
+            g.token_data = token_data
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 403
+
+        return f(*args, **kwargs)
+    return decorated_function
