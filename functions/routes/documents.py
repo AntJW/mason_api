@@ -10,7 +10,8 @@ from flask import Blueprint, jsonify, request
 from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter
 from google.cloud.firestore_v1.field_path import FieldPath
 from qdrant_client import models
-from auth_decorator import login_required, customer_owner_required
+from auth_decorator import (
+    login_required, customer_owner_required, signing_token_required)
 from clients.email_client import EmailClient
 from clients.llm_client import LLMClient
 from clients.vector_db_client import VectorDBClient
@@ -24,6 +25,9 @@ from utility import (
     save_file_to_tmp,
     upload_to_storage,
 )
+from models.invitation import InvitationStatus
+from models.audit_log import AuditLogAction, AuditLogActorRole, AuditLogTargetType, AuditLog
+from models.signing_document import SigningDocument
 
 bp = Blueprint("documents", __name__)
 
@@ -319,7 +323,7 @@ def update_document_signature_boxes(customer_id, document_id):
 @bp.post("/customers/<customer_id>/documents/<document_id>/signatures")
 @login_required
 @customer_owner_required
-def create_document_signature(customer_id, document_id):
+def submit_user_signature(customer_id, document_id):
     try:
         request_form = request.form
         signer_id = request_form.get("signerId")
@@ -767,31 +771,101 @@ def ai_generate_document_text(customer_id):
 
 
 @bp.get("/documents/<document_id>/signing-requests/<token>")
+@signing_token_required
 def get_signing_document(document_id, token):
     try:
+        signer_id = request.signer_id
         firestore_client = firestore.client()
 
         document_doc_ref = firestore_client.collection(
-            "documents").document('123')
+            "documents").document(document_id)
 
-        if not document_doc_ref.get().exists:
-            print("Document not found ================================================")
+        document_json = document_doc_ref.get().to_dict()
 
-        # Get document invitation by token
-        # Ensure invitation is valid and not expired
-        # If valid, get document
-        # audit log that the invitation was opened for signer
-        # return document
+        if not document_json:
+            raise Exception("Document not found")
 
+        merged_output = get_merged_signing_document(
+            firestore_client, document_id, signer_id)
+
+        return jsonify(merged_output), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error retrieving signing document"}, 500)
 
 
 @bp.post("/documents/<document_id>/signing-requests/<token>/signature")
-# @signing_token_required
-def submit_signature(signing_token):
-    pass
+@signing_token_required
+def submit_signer_signature(document_id, token):
+    try:
+        request_form = request.form
+        signer_id = request_form.get("signerId")
+        signature_image_file = request.files["file"]
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+
+        document_doc_ref = firestore_client.collection(
+            "documents").document(document_id)
+
+        document_snapshot = document_doc_ref.get()
+
+        if not document_snapshot.exists:
+            return jsonify({"error": "Document not found"}, 404)
+
+        # Upload signature image to storage
+        tmp_path = save_file_to_tmp(signature_image_file)
+        signature_image_path = f"customers/{document_snapshot.get("customerId")}/documents/{document_id}/signatures/{uuid.uuid4()}.png"
+        upload_to_storage(tmp_path, signature_image_path,
+                          content_type="image/png")
+        delete_tmp_file(tmp_path)
+
+        signature_doc_ref = document_doc_ref.collection(
+            "signatures").document()
+        signature_doc_ref.set({
+            "signerId": signer_id,
+            "signatureImageStoragePath": signature_image_path,
+            "signedAt": SERVER_TIMESTAMP
+        })
+
+        # Get existing signature boxes for signer
+        signature_box_coll_ref = document_doc_ref.collection("signatureBoxes")
+        signature_boxes = signature_box_coll_ref.where(
+            filter=FieldFilter("signerId", "==", signer_id)).get()
+
+        # Update signature boxes with signature id
+        for signature_box in signature_boxes:
+            signature_box.reference.update({
+                "signatureId": signature_doc_ref.id
+            })
+
+        matching_signer = document_doc_ref.collection(
+            "signers").document(signer_id).get().to_dict()
+
+        all_signature_boxes = signature_box_coll_ref.get()
+
+        signature_boxes_with_signatures = [
+            signature_box
+            for signature_box in all_signature_boxes
+            if signature_box.to_dict().get("signatureId")
+        ]
+
+        # Update document status if applicable
+        if len(signature_boxes_with_signatures) == len(all_signature_boxes):
+            document_doc_ref.update({
+                "status": DocumentStatus.COMPLETED.value
+            })
+        elif matching_signer and matching_signer.get("userId") and document_doc_ref.get().to_dict().get("status") not in (DocumentStatus.SENT.value, DocumentStatus.COMPLETED.value):
+            document_doc_ref.update({
+                "status": DocumentStatus.PREPARED.value
+            })
+
+        # Clean up signers without matching signature boxes.
+        remove_signers_without_matching_signature_boxes(document_doc_ref)
+
+        return jsonify(get_merged_signing_document(firestore_client, document_id, signer_id)), 201
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": "Error submitting signature"}, 500)
 
     # ------------------------------------------------------------------------------------------------
     # Helper functions
@@ -805,17 +879,8 @@ class DocumentStatus(str, Enum):
     COMPLETED = "completed"
 
 
-class InvitationStatus(str, Enum):
-    SENT = "sent"
-    OPENED = "opened"
-    COMPLETED = "completed"
-    CANCELED = "canceled"
-    DECLINED = "declined"
-    EXPIRED = "expired"
-
-
 # Get merged document helper function
-def get_merged_document(document_doc_ref):
+def get_merged_document(document_doc_ref) -> dict | None:
     try:
         document_json = document_doc_ref.get().to_dict()
         document_json["id"] = document_doc_ref.id
@@ -892,6 +957,92 @@ def get_merged_document(document_doc_ref):
         return None
 
 
+# Get signing document json helper function, which is a limited view of the document,
+# only including fields that are needed for signing.
+def get_merged_signing_document(firestore_client: google.cloud.firestore.Client, document_id: str, signer_id: str) -> dict | None:
+    try:
+        document_doc_ref = firestore_client.collection(
+            "documents").document(document_id)
+
+        document_snap = document_doc_ref.get()
+        if not document_snap.exists:
+            raise Exception("Document not found")
+
+        customer_id = document_snap.get("customerId")
+
+        customer_snap = firestore_client.collection(
+            "customers").document(customer_id).get()
+        if not customer_snap.exists:
+            raise Exception("Customer not found")
+        user_id = customer_snap.get("userId")
+
+        user_doc_ref = firestore_client.collection(
+            "users").document(user_id)
+
+        user_snap = user_doc_ref.get()
+        if not user_snap.exists:
+            raise Exception("User not found")
+
+        company_snapshots = firestore_client.collection("companies").where(
+            filter=FieldFilter("adminUserId", "==", customer_id)).get()
+
+        if company_snapshots:
+            company_name = company_snapshots[0].get("name")
+        else:
+            company_name = None
+
+        signer_doc_ref = document_doc_ref.collection(
+            "signers").document(signer_id)
+        signer_json = signer_doc_ref.get().to_dict()
+        signer_json["id"] = signer_doc_ref.id
+
+        signature_boxes_snapshots = document_doc_ref.collection("signatureBoxes").where(
+            filter=FieldFilter("signerId", "==", signer_id)).get()
+
+        if not signature_boxes_snapshots:
+            raise Exception("No signature boxes found")
+
+        signature_boxes_json = []
+        for signature_box_snapshot in signature_boxes_snapshots:
+            signature_box_json = signature_box_snapshot.to_dict()
+            signature_box_json["id"] = signature_box_snapshot.id
+            signature_boxes_json.append(signature_box_json)
+
+        audit_logs_snapshots = document_doc_ref.collection("auditLogs").get()
+
+        if not audit_logs_snapshots:
+            raise Exception("No audit logs found")
+
+        audit_logs_list = []
+        for audit_log_snapshot in audit_logs_snapshots:
+            audit_log_json = audit_log_snapshot.to_dict()
+            audit_log_json["id"] = audit_log_snapshot.id
+            audit_log_json["timestamp"] = audit_log_json.get(
+                "timestamp").isoformat()
+
+            audit_log = AuditLog(**audit_log_json)
+            audit_logs_list.append(audit_log.model_dump(exclude={
+                "actor": {"id", "ipAddress", "userAgent"},
+            }))
+
+        signing_document = SigningDocument(
+            id=document_id,
+            name=document_snap.get("name"),
+            text=document_snap.get("text"),
+            signer=signer_json,
+            signatureBoxes=signature_boxes_json,
+            adminName=user_snap.get("displayName"),
+            adminEmail=user_snap.get("email"),
+            companyName=company_name,
+            auditLogs=audit_logs_list
+        )
+
+        return signing_document.model_dump()
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return None
+
+
 # Get document ref for customer helper function
 def get_document_ref_for_customer(firestore_client, customer_id, document_id):
     try:
@@ -948,31 +1099,6 @@ def remove_all_document_signatures(document_doc_ref):
         logger.error(f"error: {e}")
 
 
-class AuditLogAction(str, Enum):
-    DOCUMENT_CREATED = "documentCreated"
-    DOCUMENT_UPDATED = "documentUpdated"
-    DOCUMENT_DELETED = "documentDeleted"
-    DOCUMENT_COMPLETED = "documentCompleted"
-    INVITATION_SENT = "invitationSent"
-    INVITATION_RESENT = "invitationResent"
-    INVITATION_OPENED = "invitationOpened"
-    INVITATION_EXPIRED = "invitationExpired"
-    SIGNATURE_DECLINED = "signatureDeclined"
-    SIGNATURE_COMPLETED = "signatureCompleted"
-
-
-class AuditLogActorRole(str, Enum):
-    USER = "user"
-    SIGNER = "signer"
-    SYSTEM = "system"
-
-
-class AuditLogTargetType(str, Enum):
-    DOCUMENT = "document"
-    INVITATION = "invitation"
-    SIGNATURE = "signature"
-
-
 def create_document_audit_log(document_doc_ref: DocumentReference, action: AuditLogAction, actor_role: AuditLogActorRole, target_id: str, target_type: AuditLogTargetType,
                               actor_id: str = None, actor_email: str = None, actor_name: str = None, ip_address: str = None,
                               user_agent: str = None, metadata_reason: str = None, metadata_method: str = None):
@@ -1008,4 +1134,4 @@ def create_signing_token():
 
 
 def create_signing_url(token: str, document_id: str):
-    return f"https://{os.getenv('DOMAIN')}/sign?token={token}?documentId={document_id}"
+    return f"{os.getenv('FULL_WEB_DOMAIN')}/#/sign/{document_id}?token={token}"

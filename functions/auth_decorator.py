@@ -3,6 +3,8 @@ from functools import wraps
 from firebase_admin import auth, firestore
 import google.cloud.firestore
 from logger import logger
+from models.invitation import InvitationStatus
+from google.cloud.firestore import And, FieldFilter, Or
 
 # Custom decorator to verify Firebase Authentication token
 
@@ -95,21 +97,50 @@ def customer_owner_required(f):
     return decorated_function
 
 
-# TODO: Finish this decorator
+# Used to verify that the signer has authorized token to sign the document.
 def signing_token_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        signing_token = kwargs.get("signing_token")
-        if not signing_token:
+        document_id = kwargs.get("document_id")
+        if not document_id:
             return jsonify({"error": "Unauthorized"}), 401
 
-        firestore_client = firestore.client()
+        token = kwargs.get("token")
+        if not token:
+            return jsonify({"error": "Unauthorized"}), 401
+
         try:
-            token_data = validate_signing_token(
-                firestore_client, signing_token)
-            g.token_data = token_data
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 403
+            firestore_client = firestore.client()
+            document_doc_ref = firestore_client.collection(
+                "documents").document(document_id)
+            document_json = document_doc_ref.get().to_dict()
+            if not document_json:
+                return jsonify({"error": "Unauthorized"}), 401
+
+            complex_filter = And(filters=[
+                Or(filters=[
+                    FieldFilter("status", "==", InvitationStatus.SENT.value),
+                    FieldFilter("status", "==", InvitationStatus.OPENED.value)
+                ]),
+                FieldFilter("documentId", "==", document_id),
+                FieldFilter("token", "==", token),
+            ])
+            invitation_snapshots = document_doc_ref.collection("invitations").where(
+                filter=complex_filter).get()
+
+            if not invitation_snapshots:
+                return jsonify({"error": "Unauthorized"}), 401
+
+            signer_id = invitation_snapshots[0].to_dict().get("signerId")
+
+            if not signer_id:
+                return jsonify({"error": "Unauthorized"}), 401
+
+            request.signer_id = signer_id
+        except Exception as e:
+            logger.error(f"Token verification error: {e}")
+            return jsonify({"error": "Unauthorized"}), 401
 
         return f(*args, **kwargs)
+
     return decorated_function
