@@ -101,26 +101,28 @@ def customer_owner_required(f):
 def signing_token_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        document_id = kwargs.get("document_id")
-        if not document_id:
-            return jsonify({"error": "Unauthorized"}), 401
-
-        token = kwargs.get("token")
-        if not token:
-            return jsonify({"error": "Unauthorized"}), 401
-
         try:
+            document_id = kwargs.get("document_id")
+            if not document_id:
+                raise Exception("Document ID is required")
+
+            token = kwargs.get("token")
+            if not token:
+                raise Exception("Token is required")
+
             firestore_client = firestore.client()
             document_doc_ref = firestore_client.collection(
                 "documents").document(document_id)
             document_json = document_doc_ref.get().to_dict()
             if not document_json:
-                return jsonify({"error": "Unauthorized"}), 401
+                raise Exception("Document not found")
 
             complex_filter = And(filters=[
                 Or(filters=[
                     FieldFilter("status", "==", InvitationStatus.SENT.value),
-                    FieldFilter("status", "==", InvitationStatus.OPENED.value)
+                    FieldFilter("status", "==", InvitationStatus.OPENED.value),
+                    FieldFilter("status", "==",
+                                InvitationStatus.DECLINED.value),
                 ]),
                 FieldFilter("documentId", "==", document_id),
                 FieldFilter("token", "==", token),
@@ -129,14 +131,19 @@ def signing_token_required(f):
                 filter=complex_filter).get()
 
             if not invitation_snapshots:
-                return jsonify({"error": "Unauthorized"}), 401
+                raise Exception("Invitation not found")
 
             signer_id = invitation_snapshots[0].to_dict().get("signerId")
 
-            if not signer_id:
-                return jsonify({"error": "Unauthorized"}), 401
+            signer_snap = document_doc_ref.collection(
+                "signers").document(signer_id).get()
+            if not signer_snap.exists:
+                raise Exception("Signer not found")
 
             request.signer_id = signer_id
+            request.signer_name = signer_snap.get("name")
+            request.signer_email = signer_snap.get("email")
+            request.signer_color = signer_snap.get("color")
         except Exception as e:
             logger.error(f"Token verification error: {e}")
             return jsonify({"error": "Unauthorized"}), 401
