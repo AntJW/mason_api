@@ -794,12 +794,13 @@ def get_signing_document(document_id, token):
         return jsonify({"error": "Error retrieving signing document"}, 500)
 
 
-@bp.post("/documents/<document_id>/signing-requests/<token>/signature")
+@bp.post("/documents/<document_id>/signing-requests/<token>/signatures")
 @signing_token_required
-def submit_signer_signature(document_id, token):
+def create_signer_document_signature(document_id, token):
     try:
-        request_form = request.form
-        signer_id = request_form.get("signerId")
+        signer_id = request.signer_id
+        signer_name = request.signer_name
+        signer_email = request.signer_email
         signature_image_file = request.files["file"]
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
@@ -838,9 +839,6 @@ def submit_signer_signature(document_id, token):
                 "signatureId": signature_doc_ref.id
             })
 
-        matching_signer = document_doc_ref.collection(
-            "signers").document(signer_id).get().to_dict()
-
         all_signature_boxes = signature_box_coll_ref.get()
 
         signature_boxes_with_signatures = [
@@ -854,10 +852,9 @@ def submit_signer_signature(document_id, token):
             document_doc_ref.update({
                 "status": DocumentStatus.COMPLETED.value
             })
-        elif matching_signer and matching_signer.get("userId") and document_doc_ref.get().to_dict().get("status") not in (DocumentStatus.SENT.value, DocumentStatus.COMPLETED.value):
-            document_doc_ref.update({
-                "status": DocumentStatus.PREPARED.value
-            })
+
+        create_document_audit_log(document_doc_ref, AuditLogAction.SIGNATURE_COMPLETED, AuditLogActorRole.SIGNER, signature_doc_ref.id, AuditLogTargetType.SIGNATURE,
+                                  actor_id=signer_id, actor_email=signer_email, actor_name=signer_name, ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         # Clean up signers without matching signature boxes.
         remove_signers_without_matching_signature_boxes(document_doc_ref)
@@ -867,9 +864,60 @@ def submit_signer_signature(document_id, token):
         logger.error(f"error: {e}")
         return jsonify({"error": "Error submitting signature"}, 500)
 
-    # ------------------------------------------------------------------------------------------------
-    # Helper functions
-    # ------------------------------------------------------------------------------------------------
+
+@bp.post("/documents/<document_id>/signing-requests/<token>/signatures/decline")
+@signing_token_required
+def decline_signature_invitation(document_id, token):
+    try:
+        signer_id = request.signer_id
+        signer_name = request.signer_name
+        signer_email = request.signer_email
+        request_data = request.get_json()
+        reason = request_data.get("reason")
+
+        firestore_client: google.cloud.firestore.Client = firestore.client()
+        document_doc_ref = firestore_client.collection(
+            "documents").document(document_id)
+
+        document_snap = document_doc_ref.get()
+        if not document_snap.exists:
+            raise Exception("Document not found")
+
+        complex_filter = And(filters=[
+            Or(filters=[
+                FieldFilter("status", "==", InvitationStatus.SENT.value),
+                FieldFilter("status", "==", InvitationStatus.OPENED.value),
+            ]),
+            FieldFilter("signerId", "==", signer_id),
+            FieldFilter("documentId", "==", document_id),
+        ])
+        invitation_snapshots = document_doc_ref.collection("invitations").where(
+            filter=complex_filter).get()
+
+        if not invitation_snapshots:
+            raise Exception("Invitation not found")
+
+        # Update invitation status to declined
+        invitation_snapshots[0].reference.update({
+            "status": InvitationStatus.DECLINED.value,
+            "declinedAt": SERVER_TIMESTAMP,
+            "declinedReason": reason,
+        })
+        invitation_id = invitation_snapshots[0].id
+
+        # Update audit log to record the signature decline
+        create_document_audit_log(document_doc_ref, AuditLogAction.SIGNATURE_DECLINED, AuditLogActorRole.SIGNER, invitation_id, AuditLogTargetType.SIGNATURE,
+                                  actor_id=signer_id, actor_email=signer_email, actor_name=signer_name, ip_address=request.remote_addr, user_agent=request.user_agent.string)
+
+        return jsonify(get_merged_signing_document(firestore_client, document_id, signer_id)), 200
+    except Exception as e:
+        logger.error(f"error: {e}")
+        return jsonify({"error": "Error declining signature"}, 500)
+
+
+# ------------------------------------------------------------------------------------------------
+# Helper functions
+# ------------------------------------------------------------------------------------------------
 
 
 class DocumentStatus(str, Enum):
@@ -1022,7 +1070,7 @@ def get_merged_signing_document(firestore_client: google.cloud.firestore.Client,
 
             audit_log = AuditLog(**audit_log_json)
             audit_logs_list.append(audit_log.model_dump(exclude={
-                "actor": {"id", "ipAddress", "userAgent"},
+                "actor": {"ipAddress", "userAgent"},
             }))
 
         signing_document = SigningDocument(
