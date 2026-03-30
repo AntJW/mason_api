@@ -29,6 +29,7 @@ from models.invitation import InvitationStatus
 from models.audit_log import AuditLogAction, AuditLogActorRole, AuditLogTargetType, AuditLog
 from models.signing_document import SigningDocument
 from models.document import DocumentStatus
+from models.signature import Signature
 
 bp = Blueprint("documents", __name__)
 
@@ -1041,6 +1042,19 @@ def get_merged_signing_document(firestore_client: google.cloud.firestore.Client,
             signature_box_json["id"] = signature_box_snapshot.id
             signature_boxes_json.append(signature_box_json)
 
+        signatures_snapshots = document_doc_ref.collection("signatures").where(
+            filter=FieldFilter("signerId", "==", signer_id)).get()
+
+        signatures_json = []
+        if signatures_snapshots:
+            for signature_snapshot in signatures_snapshots:
+                signature_json = signature_snapshot.to_dict()
+                signature_json["id"] = signature_snapshot.id
+                signature_json["signedAt"] = signature_json.get(
+                    "signedAt").isoformat()
+                signatures_json.append(
+                    Signature(**signature_json).model_dump())
+
         audit_logs_snapshots = document_doc_ref.collection("auditLogs").get()
 
         if not audit_logs_snapshots:
@@ -1064,6 +1078,7 @@ def get_merged_signing_document(firestore_client: google.cloud.firestore.Client,
             text=document_snap.get("text"),
             signer=signer_json,
             signatureBoxes=signature_boxes_json,
+            signatures=signatures_json,
             adminName=user_snap.get("displayName"),
             adminEmail=user_snap.get("email"),
             companyName=company_name,
