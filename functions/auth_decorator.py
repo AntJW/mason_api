@@ -113,8 +113,8 @@ def signing_token_required(f):
             firestore_client = firestore.client()
             document_doc_ref = firestore_client.collection(
                 "documents").document(document_id)
-            document_json = document_doc_ref.get().to_dict()
-            if not document_json:
+            document_snap = document_doc_ref.get()
+            if not document_snap.exists:
                 raise Exception("Document not found")
 
             complex_filter = And(filters=[
@@ -144,6 +144,8 @@ def signing_token_required(f):
             request.signer_name = signer_snap.get("name")
             request.signer_email = signer_snap.get("email")
             request.signer_color = signer_snap.get("color")
+            request.document_doc_ref = document_doc_ref
+            request.invitation_doc_ref = invitation_snapshots[0].reference
         except Exception as e:
             logger.error(f"Token verification error: {e}")
             return jsonify({"error": "Unauthorized"}), 401

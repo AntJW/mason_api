@@ -28,6 +28,7 @@ from utility import (
 from models.invitation import InvitationStatus
 from models.audit_log import AuditLogAction, AuditLogActorRole, AuditLogTargetType, AuditLog
 from models.signing_document import SigningDocument
+from models.document import DocumentStatus
 
 bp = Blueprint("documents", __name__)
 
@@ -777,18 +778,8 @@ def get_signing_document(document_id, token):
         signer_id = request.signer_id
         firestore_client = firestore.client()
 
-        document_doc_ref = firestore_client.collection(
-            "documents").document(document_id)
-
-        document_json = document_doc_ref.get().to_dict()
-
-        if not document_json:
-            raise Exception("Document not found")
-
-        merged_output = get_merged_signing_document(
-            firestore_client, document_id, signer_id)
-
-        return jsonify(merged_output), 200
+        return jsonify(get_merged_signing_document(
+            firestore_client, document_id, signer_id)), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": "Error retrieving signing document"}, 500)
@@ -798,6 +789,8 @@ def get_signing_document(document_id, token):
 @signing_token_required
 def create_signer_document_signature(document_id, token):
     try:
+        document_doc_ref = request.document_doc_ref
+        invitation_doc_ref = request.invitation_doc_ref
         signer_id = request.signer_id
         signer_name = request.signer_name
         signer_email = request.signer_email
@@ -805,17 +798,9 @@ def create_signer_document_signature(document_id, token):
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
 
-        document_doc_ref = firestore_client.collection(
-            "documents").document(document_id)
-
-        document_snapshot = document_doc_ref.get()
-
-        if not document_snapshot.exists:
-            return jsonify({"error": "Document not found"}, 404)
-
         # Upload signature image to storage
         tmp_path = save_file_to_tmp(signature_image_file)
-        signature_image_path = f"customers/{document_snapshot.get("customerId")}/documents/{document_id}/signatures/{uuid.uuid4()}.png"
+        signature_image_path = f"customers/{document_doc_ref.get().get("customerId")}/documents/{document_id}/signatures/{uuid.uuid4()}.png"
         upload_to_storage(tmp_path, signature_image_path,
                           content_type="image/png")
         delete_tmp_file(tmp_path)
@@ -839,6 +824,16 @@ def create_signer_document_signature(document_id, token):
                 "signatureId": signature_doc_ref.id
             })
 
+        # Update invitation status to completed
+        invitation_doc_ref.update({
+            "status": InvitationStatus.COMPLETED.value,
+            "completedAt": SERVER_TIMESTAMP,
+        })
+
+        # Create audit log for signature completion
+        create_document_audit_log(document_doc_ref, AuditLogAction.SIGNATURE_COMPLETED, AuditLogActorRole.SIGNER, signature_doc_ref.id, AuditLogTargetType.SIGNATURE,
+                                  actor_id=signer_id, actor_email=signer_email, actor_name=signer_name, ip_address=request.remote_addr, user_agent=request.user_agent.string)
+
         all_signature_boxes = signature_box_coll_ref.get()
 
         signature_boxes_with_signatures = [
@@ -852,9 +847,6 @@ def create_signer_document_signature(document_id, token):
             document_doc_ref.update({
                 "status": DocumentStatus.COMPLETED.value
             })
-
-        create_document_audit_log(document_doc_ref, AuditLogAction.SIGNATURE_COMPLETED, AuditLogActorRole.SIGNER, signature_doc_ref.id, AuditLogTargetType.SIGNATURE,
-                                  actor_id=signer_id, actor_email=signer_email, actor_name=signer_name, ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         # Clean up signers without matching signature boxes.
         remove_signers_without_matching_signature_boxes(document_doc_ref)
@@ -918,13 +910,6 @@ def decline_signature_invitation(document_id, token):
 # ------------------------------------------------------------------------------------------------
 # Helper functions
 # ------------------------------------------------------------------------------------------------
-
-
-class DocumentStatus(str, Enum):
-    DRAFT = "draft"
-    PREPARED = "prepared"
-    SENT = "sent"
-    COMPLETED = "completed"
 
 
 # Get merged document helper function
