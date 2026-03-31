@@ -510,6 +510,8 @@ def send_signature_invitations(customer_id, document_id):
         logger.error(f"error: {e}")
         return jsonify({"error": "Error sending signature invitations"}, 500)
 
+# Currently modifying this endpoint.
+
 
 @bp.put("/customers/<customer_id>/documents/<document_id>/signatures/invitations/cancel")
 @login_required
@@ -536,8 +538,6 @@ def cancel_signature_invitations(customer_id, document_id):
         document_doc_ref.update({
             "status": "draft"
         })
-
-        batch = firestore_client.batch()
 
         # Recipients list: all signers that are not the current_user / contractor.
         recipients = set(signer for signer in document_doc_ref.collection(
@@ -566,13 +566,15 @@ def cancel_signature_invitations(customer_id, document_id):
                 filter=complex_filter).get()
 
             for invitation_doc_snapshot in invitation_doc_snapshots:
-                batch.update(invitation_doc_snapshot.reference, {
+                invitation_doc_snapshot.reference.update({
                     "status": InvitationStatus.CANCELED.value,
                     "canceledAt": SERVER_TIMESTAMP,
                     "canceledBy": user_uid
                 })
 
-        batch.commit()
+                create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_CANCELED, actor_role=AuditLogActorRole.USER, target_id=invitation_doc_snapshot.id, target_type=AuditLogTargetType.INVITATION,
+                                          actor_id=user_uid, actor_email=user.get("email"), actor_name=user.get("name"),
+                                          ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         return jsonify(get_merged_document(document_doc_ref)), 200
     except Exception as e:
@@ -955,7 +957,7 @@ def decline_signature_invitation(document_id, token):
         invitation_id = invitation_snapshots[0].id
 
         # Update audit log to record the signature decline
-        create_document_audit_log(document_doc_ref, AuditLogAction.SIGNATURE_DECLINED, AuditLogActorRole.SIGNER, invitation_id, AuditLogTargetType.SIGNATURE,
+        create_document_audit_log(document_doc_ref, AuditLogAction.INVITATION_DECLINED, AuditLogActorRole.SIGNER, invitation_id, AuditLogTargetType.INVITATION,
                                   actor_id=signer_id, actor_email=signer_email, actor_name=signer_name, ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         return jsonify(get_merged_signing_document(firestore_client, document_id, signer_id)), 200

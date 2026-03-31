@@ -11,7 +11,8 @@ class AuditLogAction(str, Enum):
     INVITATION_RESENT = "invitationResent"
     INVITATION_OPENED = "invitationOpened"
     INVITATION_EXPIRED = "invitationExpired"
-    SIGNATURE_DECLINED = "signatureDeclined"
+    INVITATION_CANCELED = "invitationCanceled"
+    INVITATION_DECLINED = "invitationDeclined"
     SIGNATURE_COMPLETED = "signatureCompleted"
 
 
