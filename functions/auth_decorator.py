@@ -4,7 +4,7 @@ from firebase_admin import auth, firestore
 import google.cloud.firestore
 from logger import logger
 from models.invitation import InvitationStatus
-from google.cloud.firestore import And, FieldFilter, Or
+from google.cloud.firestore import And, FieldFilter, Or, Query
 from models.document import DocumentStatus
 
 # Custom decorator to verify Firebase Authentication token
@@ -143,7 +143,7 @@ def signing_token_required(f):
                 FieldFilter("token", "==", token),
             ])
             invitation_snapshots = document_doc_ref.collection("invitations").where(
-                filter=complex_filter).get()
+                filter=complex_filter).order_by("sentAt", direction=Query.DESCENDING).limit(1).get()
 
             if not invitation_snapshots:
                 raise Exception("Invitation not found")

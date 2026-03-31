@@ -851,8 +851,6 @@ def ai_generate_document_text(customer_id):
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# Currently modifying this endpoint.
-
 
 @bp.get("/documents/<document_id>/signing-requests/<token>")
 @signing_token_required
@@ -862,21 +860,10 @@ def get_signing_document(document_id, token):
         signer_email = request.signer_email
         signer_name = request.signer_name
         document_doc_ref = request.document_doc_ref
+        invitation_doc_ref = request.invitation_doc_ref
         firestore_client = firestore.client()
 
-        complex_filter = And(filters=[
-            Or(filters=[
-                FieldFilter("status", "==", InvitationStatus.SENT.value),
-                FieldFilter("status", "==", InvitationStatus.OPENED.value),
-                FieldFilter("status", "==",
-                            InvitationStatus.DECLINED.value),
-            ]),
-            FieldFilter("documentId", "==", document_id),
-            FieldFilter("token", "==", token),
-        ])
-        invitation_snapshots = document_doc_ref.collection("invitations").where(
-            filter=complex_filter).order_by("sentAt", direction=Query.DESCENDING).limit(1).get()
-        invitation_snap = invitation_snapshots[0]
+        invitation_snap = invitation_doc_ref.get()
 
         last_viewed_at = invitation_snap.to_dict().get("lastViewedAt", None)
         # If invitation has not been opened and status is currently "sent", update invitation status to opened and set openedAt to current timestamp.
@@ -891,7 +878,7 @@ def get_signing_document(document_id, token):
                                       actor_id=signer_id, actor_email=signer_email, actor_name=signer_name, ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         # If invitation has not been viewed in the last 60 minutes, create an audit log for invitation opened.
-        if last_viewed_at and last_viewed_at + datetime.timedelta(minutes=60) < datetime.datetime.now(datetime.timezone.utc):
+        if last_viewed_at and last_viewed_at + datetime.timedelta(minutes=1) < datetime.datetime.now(datetime.timezone.utc):
             invitation_snap.reference.update({
                 "lastViewedAt": SERVER_TIMESTAMP,
             })
@@ -903,6 +890,8 @@ def get_signing_document(document_id, token):
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": "Error retrieving signing document"}, 500)
+
+# Currently modifying this endpoint.
 
 
 @bp.post("/documents/<document_id>/signing-requests/<token>/signatures")
