@@ -5,6 +5,7 @@ import google.cloud.firestore
 from logger import logger
 from models.invitation import InvitationStatus
 from google.cloud.firestore import And, FieldFilter, Or
+from models.document import DocumentStatus
 
 # Custom decorator to verify Firebase Authentication token
 
@@ -126,6 +127,10 @@ def signing_token_required(f):
             document_snap = document_doc_ref.get()
             if not document_snap.exists:
                 raise Exception("Document not found")
+
+            # If document is not in status 'sent', restrict access.
+            if document_snap.get("status") != DocumentStatus.SENT.value:
+                raise Exception("Document is not in status 'sent'")
 
             complex_filter = And(filters=[
                 Or(filters=[
