@@ -510,8 +510,6 @@ def send_signature_invitations(customer_id, document_id):
         logger.error(f"error: {e}")
         return jsonify({"error": "Error sending signature invitations"}, 500)
 
-# Currently modifying this endpoint.
-
 
 @bp.put("/customers/<customer_id>/documents/<document_id>/signatures/invitations/cancel")
 @login_required
@@ -582,10 +580,10 @@ def cancel_signature_invitations(customer_id, document_id):
         return jsonify({"error": str(e)}), 500
 
 
-@bp.put("/customers/<customer_id>/documents/<document_id>/signatures/me")
+@bp.delete("/customers/<customer_id>/documents/<document_id>/signatures")
 @login_required
 @customer_owner_required
-def remove_user_signature(customer_id, document_id):
+def remove_user_document_signature(customer_id, document_id):
     try:
         user = request.user
         user_uid = user.get("uid")
@@ -595,18 +593,18 @@ def remove_user_signature(customer_id, document_id):
             firestore_client, customer_id, document_id)
 
         if not document_doc_ref.get().exists:
-            return jsonify({"error": "Document not found"}, 404)
+            raise Exception("Document not found")
 
         existing_document_json = document_doc_ref.get().to_dict()
 
         status = existing_document_json.get("status")
         if status in (DocumentStatus.SENT.value, DocumentStatus.COMPLETED.value):
-            return jsonify({"error": "Document cannot be modified in current status."}, 400)
+            raise Exception("Document cannot be modified in current status.")
 
         signer_doc_snapshots = document_doc_ref.collection("signers").where(
             filter=FieldFilter("userId", "==", user_uid)).get()
         if not signer_doc_snapshots:
-            return jsonify({"error": "Signer not found"}, 404)
+            raise Exception("Signer not found")
 
         signer = signer_doc_snapshots[0].to_dict()
         signer["id"] = signer_doc_snapshots[0].id
@@ -614,13 +612,14 @@ def remove_user_signature(customer_id, document_id):
         signature_boxes_snapshots = document_doc_ref.collection("signatureBoxes").where(
             filter=FieldFilter("signerId", "==", signer.get("id"))).get()
         if not signature_boxes_snapshots:
-            return jsonify({"error": "Signature boxes not found"}, 404)
+            raise Exception("Signature boxes not found")
 
-        signature_ids_to_delete = set()
+        signature_ids_to_delete = list()
         for signature_box_snapshot in signature_boxes_snapshots:
             signature_box = signature_box_snapshot.to_dict()
             if signature_box.get("signatureId"):
-                signature_ids_to_delete.add(signature_box.get("signatureId"))
+                signature_ids_to_delete.append(
+                    signature_box.get("signatureId"))
                 signature_box_snapshot.reference.update({
                     "signatureId": None
                 })
@@ -629,7 +628,7 @@ def remove_user_signature(customer_id, document_id):
         signatures_doc_refs = document_doc_ref.collection(
             "signatures").list_documents()
         for signature in signatures_doc_refs:
-            if signature.id not in signature_ids_to_delete:
+            if signature.id not in set(signature_ids_to_delete):
                 continue
             data = signature.get().to_dict() or {}
             image_storage_path = data.get("signatureImageStoragePath")
@@ -641,10 +640,16 @@ def remove_user_signature(customer_id, document_id):
             "status": "draft"
         })
 
+        create_document_audit_log(document_doc_ref, action=AuditLogAction.SIGNATURE_REMOVED, actor_role=AuditLogActorRole.SIGNER, target_id=signature_ids_to_delete[0], target_type=AuditLogTargetType.SIGNATURE,
+                                  actor_id=signer.get("id"), actor_email=signer.get("email"), actor_name=signer.get("name"),
+                                  ip_address=request.remote_addr, user_agent=request.user_agent.string)
+
         return jsonify(get_merged_document(document_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error removing user document signature"}, 500)
+
+# Currently modifying this endpoint.
 
 
 @bp.post("/customers/<customer_id>/documents/<document_id>/signers/<signer_id>/reminder")
@@ -652,18 +657,19 @@ def remove_user_signature(customer_id, document_id):
 @customer_owner_required
 def send_signature_reminder(customer_id, document_id, signer_id):
     try:
+        user = request.user
         firestore_client: google.cloud.firestore.Client = firestore.client()
 
         document_doc_ref = get_document_ref_for_customer(
             firestore_client, customer_id, document_id)
 
         if document_doc_ref.get().to_dict().get("status") == DocumentStatus.COMPLETED.value:
-            return jsonify({"error": "Document is already in status 'complete'"}, 400)
+            raise Exception("Document is already in status 'complete'")
 
         signer_doc_snapshot = document_doc_ref.collection(
             "signers").document(signer_id).get()
         if not signer_doc_snapshot:
-            return jsonify({"error": "Signer not found"}, 404)
+            raise Exception("Signer not found")
 
         signer = signer_doc_snapshot.to_dict()
         signer_email = signer.get("email")
@@ -694,26 +700,35 @@ def send_signature_reminder(customer_id, document_id, signer_id):
         response = EmailClient().send_simple_message(signer_email, "Signature Reminder",
                                                      "You have a signature request for the document. Please sign it. " + signing_url)
 
+        invitation_id = None
         if existing_invitations_snapshots:
+            invitation_id = existing_invitations_snapshots[0].id
             existing_invitations_snapshots[0].reference.update({
                 "lastReminderAt": SERVER_TIMESTAMP,
                 "reminderCount": Increment(1),
             })
         else:
-            document_doc_ref.collection("invitations").document().set({
-                "signerId": signer_id,
-                "email": signer_email,
-                "name": signer_name,
-                "documentId": document_id,
-                "token": token,
-                "status": InvitationStatus.SENT.value,
+            invitation_doc_ref = document_doc_ref.collection(
+                "invitations").document()
+            invitation_id = invitation_doc_ref.id
+            invitation_json = Invitation(id=invitation_doc_ref.id, signerId=signer_id, email=signer_email,
+                                         name=signer_name, documentId=document_id, token=token, status=InvitationStatus.SENT.value,
+                                         sentAt="PLACEHOLDER_FOR_SERVER_TIMESTAMP", expiresAt="PLACEHOLDER_FOR_DATETIME", reminderCount=0).model_dump(exclude={
+                                             "id", "sentAt", "expiresAt",
+                                         })
+            invitation_doc_ref.set({
+                **invitation_json,
                 "sentAt": SERVER_TIMESTAMP,
                 "expiresAt": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=14),
             })
+
+        create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_RESENT, actor_role=AuditLogActorRole.USER, target_id=invitation_id, target_type=AuditLogTargetType.INVITATION,
+                                  actor_id=user.get("uid"), actor_email=user.get("email"), actor_name=user.get("name"),
+                                  ip_address=request.remote_addr, user_agent=request.user_agent.string)
         return jsonify({}), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error sending signature reminder"}, 500)
 
 
 @bp.delete("/customers/<customer_id>/documents/<document_id>/delete")
