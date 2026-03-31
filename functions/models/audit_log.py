@@ -14,6 +14,7 @@ class AuditLogAction(str, Enum):
     INVITATION_CANCELED = "invitationCanceled"
     INVITATION_DECLINED = "invitationDeclined"
     SIGNATURE_COMPLETED = "signatureCompleted"
+    SIGNATURE_REMOVED = "signatureRemoved"
 
 
 class AuditLogActorRole(str, Enum):
