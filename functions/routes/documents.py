@@ -25,7 +25,7 @@ from utility import (
     save_file_to_tmp,
     upload_to_storage,
 )
-from models.invitation import InvitationStatus
+from models.invitation import InvitationStatus, Invitation
 from models.audit_log import AuditLogAction, AuditLogActorRole, AuditLogTargetType, AuditLog
 from models.signing_document import SigningDocument
 from models.document import DocumentStatus
@@ -405,7 +405,7 @@ def create_user_document_signature(customer_id, document_id):
         # Update signature boxes with signature id
         for signature_box_snap in signature_box_snapshots:
             signature_box_obj = SignatureBox(
-                id=signature_box_snap.reference.id, **signature_box_snap.to_dict())
+                id=signature_box_snap.id, **signature_box_snap.to_dict())
             signature_box_obj.signatureId = signature_doc_ref.id
 
             signature_box_snap.reference.update(signature_box_obj.model_dump(include={
@@ -457,10 +457,10 @@ def send_signature_invitations(customer_id, document_id):
             firestore_client, customer_id, document_id)
 
         if not document_doc_ref.get().exists:
-            return jsonify({"error": "Document not found"}, 404)
+            raise Exception("Document not found")
 
         if document_doc_ref.get().to_dict().get("status") == DocumentStatus.COMPLETED.value:
-            return jsonify({"error": "Document is already in status 'complete'"}, 400)
+            raise Exception("Document is already in status 'complete'")
 
         # Clean up signers without matching signature boxes.
         remove_signers_without_matching_signature_boxes(document_doc_ref)
@@ -483,17 +483,23 @@ def send_signature_invitations(customer_id, document_id):
             response = EmailClient().send_simple_message(
                 recipient_email, subject, body + "\n\n" + signing_url)
 
-            document_doc_ref.collection("invitations").document().set({
-                "signerId": signer_id,
-                "email": recipient_email,
-                "name": recipient_name,
-                "documentId": document_id,
-                "token": token,
-                "status": InvitationStatus.SENT.value,
+            invitation_doc_ref = document_doc_ref.collection(
+                "invitations").document()
+            invitation_json = Invitation(id=invitation_doc_ref.id, signerId=signer_id, email=recipient_email,
+                                         name=recipient_name, documentId=document_id, token=token, status=InvitationStatus.SENT.value,
+                                         sentAt="PLACEHOLDER_FOR_SERVER_TIMESTAMP", expiresAt="PLACEHOLDER_FOR_DATETIME", reminderCount=0).model_dump(exclude={
+                                             "id", "sentAt", "expiresAt",
+                                         })
+
+            invitation_doc_ref.set({
+                **invitation_json,
                 "sentAt": SERVER_TIMESTAMP,
-                "expiresAt": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=14),
-                "reminderCount": 0,
+                "expiresAt": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30),
             })
+
+            create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_SENT, actor_role=AuditLogActorRole.USER, target_id=invitation_doc_ref.id, target_type=AuditLogTargetType.INVITATION,
+                                      actor_id=user_uid, actor_email=user.get("email"), actor_name=user.get("name"),
+                                      ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         document_doc_ref.update({
             "status": DocumentStatus.SENT.value
@@ -502,7 +508,7 @@ def send_signature_invitations(customer_id, document_id):
         return jsonify(get_merged_document(document_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error sending signature invitations"}, 500)
 
 
 @bp.put("/customers/<customer_id>/documents/<document_id>/signatures/invitations/cancel")
@@ -549,6 +555,8 @@ def cancel_signature_invitations(customer_id, document_id):
                 Or(filters=[
                     FieldFilter("status", "==", InvitationStatus.SENT.value),
                     FieldFilter("status", "==", InvitationStatus.OPENED.value),
+                    FieldFilter("status", "==",
+                                InvitationStatus.DECLINED.value),
                 ]),
                 FieldFilter("signerId", "==", signer_id),
                 FieldFilter("documentId", "==", document_id),
