@@ -553,8 +553,6 @@ def cancel_signature_invitations(customer_id, document_id):
                 Or(filters=[
                     FieldFilter("status", "==", InvitationStatus.SENT.value),
                     FieldFilter("status", "==", InvitationStatus.OPENED.value),
-                    FieldFilter("status", "==",
-                                InvitationStatus.DECLINED.value),
                 ]),
                 FieldFilter("signerId", "==", signer_id),
                 FieldFilter("documentId", "==", document_id),
@@ -649,8 +647,6 @@ def remove_user_document_signature(customer_id, document_id):
         logger.error(f"error: {e}")
         return jsonify({"error": "Error removing user document signature"}, 500)
 
-# Currently modifying this endpoint.
-
 
 @bp.post("/customers/<customer_id>/documents/<document_id>/signers/<signer_id>/reminder")
 @login_required
@@ -678,39 +674,34 @@ def send_signature_reminder(customer_id, document_id, signer_id):
         complex_filter = And(filters=[
             Or(filters=[
                 FieldFilter("status", "==", InvitationStatus.SENT.value),
-                FieldFilter("status", "==", InvitationStatus.OPENED.value)
+                FieldFilter("status", "==", InvitationStatus.OPENED.value),
             ]),
             FieldFilter("signerId", "==", signer_id),
             FieldFilter("documentId", "==", document_id),
-            FieldFilter("expiresAt", ">", datetime.datetime.now(
-                datetime.timezone.utc)),
         ])
         existing_invitations_snapshots = document_doc_ref.collection("invitations").where(
             filter=complex_filter).get()
 
-        # Get token for reminder invitation. If no existing invitations, generate new token.
-        if existing_invitations_snapshots:
-            token = existing_invitations_snapshots[0].to_dict().get("token")
-        else:
-            token = create_signing_token()
+        # If no active invitations found, skip reminder. This could be that signer declined the invitation. Or has already completed the signature.
+        if not existing_invitations_snapshots:
+            raise Exception("No active invitations found. Skipping reminder.")
 
-        signing_url = create_signing_url(token, document_id)
+        existing_invitation_snap = existing_invitations_snapshots[0]
 
-        # TODO: Add retry logic and error handling for email sending.
-        response = EmailClient().send_simple_message(signer_email, "Signature Reminder",
-                                                     "You have a signature request for the document. Please sign it. " + signing_url)
-
-        invitation_id = None
-        if existing_invitations_snapshots:
-            invitation_id = existing_invitations_snapshots[0].id
-            existing_invitations_snapshots[0].reference.update({
-                "lastReminderAt": SERVER_TIMESTAMP,
-                "reminderCount": Increment(1),
+        # If invitation has expired, update invitation status to expired, and create a new invitation.
+        if existing_invitation_snap.get("expiresAt") <= datetime.datetime.now(datetime.timezone.utc):
+            existing_invitation_snap.reference.update({
+                "status": InvitationStatus.EXPIRED.value,
             })
-        else:
+
+            token = create_signing_token()
+            # TODO: Add retry logic and error handling for email sending.
+            response = EmailClient().send_simple_message(signer_email, "Signature Reminder",
+                                                         "You have a signature request for the document. Please sign it. " + create_signing_url(token, document_id))
+
             invitation_doc_ref = document_doc_ref.collection(
                 "invitations").document()
-            invitation_id = invitation_doc_ref.id
+
             invitation_json = Invitation(id=invitation_doc_ref.id, signerId=signer_id, email=signer_email,
                                          name=signer_name, documentId=document_id, token=token, status=InvitationStatus.SENT.value,
                                          sentAt="PLACEHOLDER_FOR_SERVER_TIMESTAMP", expiresAt="PLACEHOLDER_FOR_DATETIME", reminderCount=0).model_dump(exclude={
@@ -719,12 +710,28 @@ def send_signature_reminder(customer_id, document_id, signer_id):
             invitation_doc_ref.set({
                 **invitation_json,
                 "sentAt": SERVER_TIMESTAMP,
-                "expiresAt": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=14),
+                "expiresAt": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30),
             })
 
-        create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_RESENT, actor_role=AuditLogActorRole.USER, target_id=invitation_id, target_type=AuditLogTargetType.INVITATION,
-                                  actor_id=user.get("uid"), actor_email=user.get("email"), actor_name=user.get("displayName"),
-                                  ip_address=request.remote_addr, user_agent=request.user_agent.string)
+            create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_SENT, actor_role=AuditLogActorRole.USER, target_id=invitation_doc_ref.id, target_type=AuditLogTargetType.INVITATION,
+                                      actor_id=user.get("uid"), actor_email=user.get("email"), actor_name=user.get("displayName"),
+                                      ip_address=request.remote_addr, user_agent=request.user_agent.string)
+
+        else:
+            token = existing_invitation_snap.get("token")
+            # TODO: Add retry logic and error handling for email sending.
+            response = EmailClient().send_simple_message(signer_email, "Signature Reminder",
+                                                         "You have a signature request for the document. Please sign it. " + create_signing_url(token, document_id))
+
+            existing_invitation_snap.reference.update({
+                "lastReminderAt": SERVER_TIMESTAMP,
+                "reminderCount": Increment(1),
+            })
+
+            create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_RESENT, actor_role=AuditLogActorRole.USER, target_id=existing_invitation_snap.id, target_type=AuditLogTargetType.INVITATION,
+                                      actor_id=user.get("uid"), actor_email=user.get("email"), actor_name=user.get("displayName"),
+                                      ip_address=request.remote_addr, user_agent=request.user_agent.string)
+
         return jsonify({}), 200
     except Exception as e:
         logger.error(f"error: {e}")
@@ -741,19 +748,19 @@ def delete_document(customer_id, document_id):
             firestore_client, customer_id, document_id)
 
         if not document_doc_ref.get().exists:
-            return jsonify({"error": "Document not found"}, 404)
+            raise Exception("Document not found")
 
         if document_doc_ref.get().to_dict().get("status") in (DocumentStatus.PREPARED.value, DocumentStatus.SENT.value, DocumentStatus.COMPLETED.value):
-            return jsonify({"error": "Document not eligible for deletion due to it's current status."}, 400)
+            raise Exception(
+                "Document not eligible for deletion due to it's current status.")
 
-        # TODO: Check document audit logs to determine if it previously had signatures. If so,
-        # archive this document, instead of deleting it. status = "archived"
+        remove_all_document_signatures(document_doc_ref)
 
         document_doc_ref.delete()
         return jsonify({}), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error deleting document"}, 500)
 
 
 @bp.post("/customers/<customer_id>/documents/ai/generate")
@@ -843,6 +850,8 @@ def ai_generate_document_text(customer_id):
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
+
+# Currently modifying this endpoint.
 
 
 @bp.get("/documents/<document_id>/signing-requests/<token>")
@@ -1226,6 +1235,7 @@ def remove_all_document_signatures(document_doc_ref):
             })
     except Exception as e:
         logger.error(f"error: {e}")
+        raise Exception("Error removing all document signatures")
 
 
 def create_document_audit_log(document_doc_ref: DocumentReference, action: AuditLogAction, actor_role: AuditLogActorRole, target_id: str, target_type: AuditLogTargetType,
