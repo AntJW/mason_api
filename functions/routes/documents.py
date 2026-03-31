@@ -7,7 +7,7 @@ import secrets
 import google.cloud.firestore
 from firebase_admin import firestore
 from flask import Blueprint, jsonify, request
-from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter
+from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter, Query
 from google.cloud.firestore_v1.field_path import FieldPath
 from qdrant_client import models
 from auth_decorator import (
@@ -859,7 +859,44 @@ def ai_generate_document_text(customer_id):
 def get_signing_document(document_id, token):
     try:
         signer_id = request.signer_id
+        signer_email = request.signer_email
+        signer_name = request.signer_name
+        document_doc_ref = request.document_doc_ref
         firestore_client = firestore.client()
+
+        complex_filter = And(filters=[
+            Or(filters=[
+                FieldFilter("status", "==", InvitationStatus.SENT.value),
+                FieldFilter("status", "==", InvitationStatus.OPENED.value),
+                FieldFilter("status", "==",
+                            InvitationStatus.DECLINED.value),
+            ]),
+            FieldFilter("documentId", "==", document_id),
+            FieldFilter("token", "==", token),
+        ])
+        invitation_snapshots = document_doc_ref.collection("invitations").where(
+            filter=complex_filter).order_by("sentAt", direction=Query.DESCENDING).limit(1).get()
+        invitation_snap = invitation_snapshots[0]
+
+        last_viewed_at = invitation_snap.to_dict().get("lastViewedAt", None)
+        # If invitation has not been opened and status is currently "sent", update invitation status to opened and set openedAt to current timestamp.
+        if not invitation_snap.to_dict().get("openedAt", None) and invitation_snap.to_dict().get("status") == InvitationStatus.SENT.value:
+            invitation_snap.reference.update({
+                "status": InvitationStatus.OPENED.value,
+                "openedAt": SERVER_TIMESTAMP,
+                "lastViewedAt": SERVER_TIMESTAMP,
+            })
+
+            create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_OPENED, actor_role=AuditLogActorRole.SIGNER, target_id=invitation_snap.id, target_type=AuditLogTargetType.INVITATION,
+                                      actor_id=signer_id, actor_email=signer_email, actor_name=signer_name, ip_address=request.remote_addr, user_agent=request.user_agent.string)
+
+        # If invitation has not been viewed in the last 60 minutes, create an audit log for invitation opened.
+        if last_viewed_at and last_viewed_at + datetime.timedelta(minutes=60) < datetime.datetime.now(datetime.timezone.utc):
+            invitation_snap.reference.update({
+                "lastViewedAt": SERVER_TIMESTAMP,
+            })
+            create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_OPENED, actor_role=AuditLogActorRole.SIGNER, target_id=invitation_snap.id, target_type=AuditLogTargetType.INVITATION,
+                                      actor_id=signer_id, actor_email=signer_email, actor_name=signer_name, ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         return jsonify(get_merged_signing_document(
             firestore_client, document_id, signer_id)), 200

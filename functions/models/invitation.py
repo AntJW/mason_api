@@ -35,3 +35,4 @@ class Invitation(BaseModel):
     declinedReason: str | None = None
     lastReminderAt: str | None = None  # isoformat string
     reminderCount: int
+    lastViewedAt: str | None = None  # isoformat string
