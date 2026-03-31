@@ -16,7 +16,7 @@ def login_required(f):
         auth_header = request.headers.get("Authorization")
 
         if not auth_header or not auth_header.startswith("Bearer "):
-            return jsonify({"error": "Unauthorized: No token provided."}), 401
+            raise Exception("Unauthorized: No token provided.")
 
         # Extract the token
         id_token = auth_header.split("Bearer ")[1]
@@ -27,9 +27,19 @@ def login_required(f):
 
             # Deny access to anonymous users
             if decoded_token.get('firebase', {}).get('sign_in_provider') == 'anonymous':
-                return jsonify({"error": "Unauthorized: Invalid or expired token."}), 401
+                raise Exception(
+                    "Unauthorized: Anonymous users are not allowed to access this endpoint.")
+
+            firestore_client: google.cloud.firestore.Client = firestore.client()
+            user_doc_snap = firestore_client.collection("users").document(
+                decoded_token.get("uid")).get()
+            if not user_doc_snap.exists:
+                raise Exception("Unauthorized: User not found.")
 
             request.user = decoded_token  # Attach user info to request
+            request.user["displayName"] = user_doc_snap.get("displayName")
+            request.user["firstName"] = user_doc_snap.get("firstName")
+            request.user["lastName"] = user_doc_snap.get("lastName")
         except Exception as e:
             logger.error(f"Token verification error: {e}")
             return jsonify({"error": "Unauthorized: Invalid or expired token."}), 401
@@ -49,7 +59,7 @@ def login_or_anonymous_required(f):
         auth_header = request.headers.get("Authorization")
 
         if not auth_header or not auth_header.startswith("Bearer "):
-            return jsonify({"error": "Unauthorized: No token provided."}), 401
+            raise Exception("Unauthorized: No token provided.")
 
         # Extract the token
         id_token = auth_header.split("Bearer ")[1]
@@ -77,7 +87,7 @@ def customer_owner_required(f):
     def decorated_function(*args, **kwargs):
         customer_id = kwargs.get("customer_id")
         if not customer_id:
-            return jsonify({"error": "Missing customer_id."}), 400
+            raise Exception("Missing customer_id.")
 
         user_uid = request.user.get("uid")
         firestore_client: google.cloud.firestore.Client = firestore.client()
@@ -86,11 +96,11 @@ def customer_owner_required(f):
         ).get(field_paths=["userId"])
 
         if not customer_snap.exists:
-            return jsonify({"error": "Customer not found."}), 404
+            raise Exception("Customer not found.")
 
         owner_uid = customer_snap.get("userId")
         if owner_uid != user_uid:
-            return jsonify({"error": "Forbidden: customer does not belong to this user."}), 403
+            return jsonify({"error": "Unauthorized: access denied."}), 403
 
         return f(*args, **kwargs)
 

@@ -102,7 +102,7 @@ def create_document(customer_id):
         create_document_audit_log(document_doc_ref, action=AuditLogAction.DOCUMENT_CREATED, actor_role=AuditLogActorRole.USER,
                                   target_id=document_doc_ref.id, target_type=AuditLogTargetType.DOCUMENT, actor_id=user_uid, actor_email=user.get(
                                       "email"),
-                                  actor_name=user.get("name"), ip_address=request.remote_addr, user_agent=request.user_agent.string)
+                                  actor_name=user.get("displayName"), ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         return jsonify(get_merged_document(document_doc_ref)), 201
     except Exception as e:
@@ -183,7 +183,7 @@ def update_document(customer_id, document_id):
         create_document_audit_log(document_doc_ref, action=AuditLogAction.DOCUMENT_UPDATED.value, actor_role=AuditLogActorRole.USER.value,
                                   target_id=document_doc_ref.id, target_type=AuditLogTargetType.DOCUMENT.value, actor_id=user.get("uid"), actor_email=user.get(
                                       "email"),
-                                  actor_name=user.get("name"), ip_address=request.remote_addr, user_agent=request.user_agent.string)
+                                  actor_name=user.get("displayName"), ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         return jsonify(get_merged_document(document_doc_ref)), 200
     except Exception as e:
@@ -498,7 +498,7 @@ def send_signature_invitations(customer_id, document_id):
             })
 
             create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_SENT, actor_role=AuditLogActorRole.USER, target_id=invitation_doc_ref.id, target_type=AuditLogTargetType.INVITATION,
-                                      actor_id=user_uid, actor_email=user.get("email"), actor_name=user.get("name"),
+                                      actor_id=user_uid, actor_email=user.get("email"), actor_name=user.get("displayName"),
                                       ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         document_doc_ref.update({
@@ -571,7 +571,7 @@ def cancel_signature_invitations(customer_id, document_id):
                 })
 
                 create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_CANCELED, actor_role=AuditLogActorRole.USER, target_id=invitation_doc_snapshot.id, target_type=AuditLogTargetType.INVITATION,
-                                          actor_id=user_uid, actor_email=user.get("email"), actor_name=user.get("name"),
+                                          actor_id=user_uid, actor_email=user.get("email"), actor_name=user.get("displayName"),
                                           ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         return jsonify(get_merged_document(document_doc_ref)), 200
@@ -723,7 +723,7 @@ def send_signature_reminder(customer_id, document_id, signer_id):
             })
 
         create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_RESENT, actor_role=AuditLogActorRole.USER, target_id=invitation_id, target_type=AuditLogTargetType.INVITATION,
-                                  actor_id=user.get("uid"), actor_email=user.get("email"), actor_name=user.get("name"),
+                                  actor_id=user.get("uid"), actor_email=user.get("email"), actor_name=user.get("displayName"),
                                   ip_address=request.remote_addr, user_agent=request.user_agent.string)
         return jsonify({}), 200
     except Exception as e:
