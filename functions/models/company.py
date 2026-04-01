@@ -4,5 +4,5 @@ from pydantic import BaseModel
 class Company(BaseModel):
     id: str
     name: str
-    adminUserId: str
+    ownerUserId: str
     createdAt: str  # isoformat string

@@ -26,13 +26,13 @@ def create_company():
         company_json = {
             "name": company_name,
             "createdAt": SERVER_TIMESTAMP,
-            "adminUserId": user_uid
+            "ownerUserId": user_uid
         }
 
         company_doc_ref.set(company_json)
 
         company_doc = company_doc_ref.get(field_paths=[
-            "name", "createdAt", "adminUserId"])
+            "name", "createdAt", "ownerUserId"])
         company_json = company_doc.to_dict()
         company_json["id"] = company_id
         company_json["createdAt"] = company_doc.get(
@@ -52,7 +52,7 @@ def get_company_me():
         user_uid = user.get("uid")
         firestore_client: google.cloud.firestore.Client = firestore.client()
         company_docs = firestore_client.collection(
-            "companies").where(filter=FieldFilter("adminUserId", "==", user_uid)).get()
+            "companies").where(filter=FieldFilter("ownerUserId", "==", user_uid)).get()
 
         company_json = {}
         for company_doc in company_docs:
@@ -80,7 +80,7 @@ def update_company_me():
         request_data = request.get_json()
         company_id = request_data.get("id")
         company_name = request_data.get("name")
-        company_admin_user_id = request_data.get("adminUserId")
+        company_admin_user_id = request_data.get("ownerUserId")
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
         company_doc_ref = firestore_client.collection(
@@ -91,7 +91,7 @@ def update_company_me():
         })
 
         company_doc = company_doc_ref.get(field_paths=[
-            "name", "adminUserId", "createdAt"])
+            "name", "ownerUserId", "createdAt"])
         company_json = company_doc.to_dict()
         company_json["id"] = company_id
         company_json["createdAt"] = company_doc.get(
@@ -100,4 +100,3 @@ def update_company_me():
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
-

@@ -1145,7 +1145,7 @@ def get_merged_signing_document(firestore_client: google.cloud.firestore.Client,
             raise Exception("User not found")
 
         company_snapshots = firestore_client.collection("companies").where(
-            filter=FieldFilter("adminUserId", "==", customer_id)).get()
+            filter=FieldFilter("ownerUserId", "==", customer_id)).get()
 
         if company_snapshots:
             company_name = company_snapshots[0].get("name")
