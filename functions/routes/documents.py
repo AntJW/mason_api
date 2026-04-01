@@ -891,8 +891,6 @@ def get_signing_document(document_id, token):
         logger.error(f"error: {e}")
         return jsonify({"error": "Error retrieving signing document"}, 500)
 
-# Currently modifying this endpoint.
-
 
 @bp.post("/documents/<document_id>/signing-requests/<token>/signatures")
 @signing_token_required
@@ -1031,8 +1029,10 @@ def get_merged_document(document_doc_ref) -> dict | None:
         document_json["createdAt"] = document_json.get(
             "createdAt").isoformat()
 
+        document_obj = Document(**document_json)
+
         signers_doc_ref = document_doc_ref.collection("signers").get()
-        signers_json = []
+        signers_objs = []
         for signer_doc in signers_doc_ref:
             signer_json = signer_doc.to_dict()
             signer_json["id"] = signer_doc.id
@@ -1040,30 +1040,33 @@ def get_merged_document(document_doc_ref) -> dict | None:
                 "createdAt").isoformat()
             signer_json["updatedAt"] = datetime_iso_or_none(signer_json.get(
                 "updatedAt"))
-            signers_json.append(signer_json)
-        document_json["signers"] = signers_json
+            signers_objs.append(Signer(**signer_json))
+
+        document_obj.signers = signers_objs
 
         signature_boxes_docs = document_doc_ref.collection(
             "signatureBoxes").get()
-        signature_boxes_json = []
+        signature_boxes_objs = []
         for signature_box_doc in signature_boxes_docs:
             signature_box_json = signature_box_doc.to_dict()
             signature_box_json["id"] = signature_box_doc.id
-            signature_boxes_json.append(signature_box_json)
-        document_json["signatureBoxes"] = signature_boxes_json
+            signature_boxes_objs.append(SignatureBox(**signature_box_json))
+
+        document_obj.signatureBoxes = signature_boxes_objs
 
         signatures_docs = document_doc_ref.collection("signatures").get()
-        signatures_json = []
+        signatures_objs = []
         for signature_doc in signatures_docs:
             signature_json = signature_doc.to_dict()
             signature_json["id"] = signature_doc.id
             signature_json["signedAt"] = signature_json.get(
                 "signedAt").isoformat()
-            signatures_json.append(signature_json)
-        document_json["signatures"] = signatures_json
+            signatures_objs.append(Signature(**signature_json))
+
+        document_obj.signatures = signatures_objs
 
         invitations_docs = document_doc_ref.collection("invitations").get()
-        invitations_json = []
+        invitations_objs = []
         for invitation_doc in invitations_docs:
             invitation_json = invitation_doc.to_dict()
             invitation_json["id"] = invitation_doc.id
@@ -1086,20 +1089,25 @@ def get_merged_document(document_doc_ref) -> dict | None:
             invitation_json["lastReminderAt"] = datetime_iso_or_none(
                 invitation_json.get("lastReminderAt"))
 
-            invitations_json.append(invitation_json)
-        document_json["invitations"] = invitations_json
+            invitation_json["lastViewedAt"] = datetime_iso_or_none(
+                invitation_json.get("lastViewedAt"))
+
+            invitations_objs.append(Invitation(**invitation_json))
+
+        document_obj.invitations = invitations_objs
 
         audit_logs_docs = document_doc_ref.collection("auditLogs").get()
-        audit_logs_json = []
+        audit_logs_objs = []
         for audit_log_doc in audit_logs_docs:
             audit_log_json = audit_log_doc.to_dict()
             audit_log_json["id"] = audit_log_doc.id
             audit_log_json["timestamp"] = audit_log_json.get(
                 "timestamp").isoformat()
-            audit_logs_json.append(audit_log_json)
-        document_json["auditLogs"] = audit_logs_json
+            audit_logs_objs.append(AuditLog(**audit_log_json))
 
-        return document_json
+        document_obj.auditLogs = audit_logs_objs
+
+        return document_obj.model_dump()
     except Exception as e:
         logger.error(f"error: {e}")
         return None
@@ -1147,6 +1155,7 @@ def get_merged_signing_document(firestore_client: google.cloud.firestore.Client,
             "createdAt").isoformat()
         signer_json["updatedAt"] = datetime_iso_or_none(signer_json.get(
             "updatedAt"))
+        signer_obj = Signer(**signer_json)
 
         signature_boxes_snapshots = document_doc_ref.collection("signatureBoxes").where(
             filter=FieldFilter("signerId", "==", signer_id)).get()
@@ -1154,56 +1163,55 @@ def get_merged_signing_document(firestore_client: google.cloud.firestore.Client,
         if not signature_boxes_snapshots:
             raise Exception("No signature boxes found")
 
-        signature_boxes_json = []
+        signature_boxes_objs = []
         for signature_box_snapshot in signature_boxes_snapshots:
             signature_box_json = signature_box_snapshot.to_dict()
             signature_box_json["id"] = signature_box_snapshot.id
-            signature_boxes_json.append(signature_box_json)
+            signature_boxes_objs.append(SignatureBox(**signature_box_json))
 
         signatures_snapshots = document_doc_ref.collection("signatures").where(
             filter=FieldFilter("signerId", "==", signer_id)).get()
 
-        signatures_json = []
+        signatures_objs = []
         if signatures_snapshots:
             for signature_snapshot in signatures_snapshots:
                 signature_json = signature_snapshot.to_dict()
                 signature_json["id"] = signature_snapshot.id
                 signature_json["signedAt"] = signature_json.get(
                     "signedAt").isoformat()
-                signatures_json.append(
-                    Signature(**signature_json).model_dump())
+                signatures_objs.append(Signature(**signature_json))
 
         audit_logs_snapshots = document_doc_ref.collection("auditLogs").get()
 
         if not audit_logs_snapshots:
             raise Exception("No audit logs found")
 
-        audit_logs_list = []
+        audit_logs_objs = []
         for audit_log_snapshot in audit_logs_snapshots:
             audit_log_json = audit_log_snapshot.to_dict()
             audit_log_json["id"] = audit_log_snapshot.id
             audit_log_json["timestamp"] = audit_log_json.get(
                 "timestamp").isoformat()
-
-            audit_log = AuditLog(**audit_log_json)
-            audit_logs_list.append(audit_log.model_dump(exclude={
-                "actor": {"ipAddress", "userAgent"},
-            }))
+            audit_logs_objs.append(AuditLog(**audit_log_json))
 
         signing_document = SigningDocument(
             id=document_id,
             name=document_snap.get("name"),
             text=document_snap.get("text"),
-            signer=signer_json,
-            signatureBoxes=signature_boxes_json,
-            signatures=signatures_json,
+            signer=signer_obj,
+            signatureBoxes=signature_boxes_objs,
+            signatures=signatures_objs,
             adminName=user_snap.get("displayName"),
             adminEmail=user_snap.get("email"),
             companyName=company_name,
-            auditLogs=audit_logs_list
+            auditLogs=audit_logs_objs
         )
 
-        return signing_document.model_dump()
+        return signing_document.model_dump(exclude={
+            "auditLogs": {
+                "__all__": {"actor": {"ipAddress", "userAgent"}}
+            }
+        })
     except Exception as e:
         logger.error(f"error: {e}")
         return None
