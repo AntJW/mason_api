@@ -916,9 +916,11 @@ def create_signer_document_signature(document_id, token):
 
         signature_doc_ref = document_doc_ref.collection(
             "signatures").document()
+        signature_json = Signature(id=signature_doc_ref.id, signerId=signer_id, signatureImageStoragePath=signature_image_path, signedAt="PLACEHOLDER_FOR_SERVER_TIMESTAMP").model_dump(exclude={
+            "id", "signedAt",
+        })
         signature_doc_ref.set({
-            "signerId": signer_id,
-            "signatureImageStoragePath": signature_image_path,
+            **signature_json,
             "signedAt": SERVER_TIMESTAMP
         })
 
