@@ -694,6 +694,11 @@ def send_signature_reminder(customer_id, document_id, signer_id):
                 "status": InvitationStatus.EXPIRED.value,
             })
 
+            create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_EXPIRED, actor_role=AuditLogActorRole.SYSTEM,
+                                      target_id=existing_invitation_snap.id, target_type=AuditLogTargetType.INVITATION,
+                                      actor_id=None, actor_email=None, actor_name=None,
+                                      ip_address=None, user_agent=None)
+
             token = create_signing_token()
             # TODO: Add retry logic and error handling for email sending.
             response = EmailClient().send_simple_message(signer_email, "Signature Reminder",
