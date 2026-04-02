@@ -6,6 +6,7 @@ from logger import logger
 from models.invitation import InvitationStatus
 from google.cloud.firestore import And, FieldFilter, Or, Query
 from models.document import DocumentStatus
+from models.user import UserStatus, UserRole
 
 # Custom decorator to verify Firebase Authentication token
 
@@ -41,6 +42,13 @@ def login_required(f):
             request.user["displayName"] = user_doc_snap.get("displayName")
             request.user["firstName"] = user_doc_snap.get("firstName")
             request.user["lastName"] = user_doc_snap.get("lastName")
+            request.user["email"] = user_doc_snap.get("email")
+            request.user["companyId"] = user_doc_snap.get("companyId")
+            request.user["role"] = user_doc_snap.get("role")
+            request.user["status"] = user_doc_snap.get("status")
+            request.user["statusUpdatedAt"] = user_doc_snap.get(
+                "statusUpdatedAt")
+            request.user["createdAt"] = user_doc_snap.get("createdAt")
         except Exception as e:
             logger.error(f"Token verification error: {e}")
             return jsonify({"error": "Unauthorized: Invalid or expired token."}), 401
@@ -124,21 +132,26 @@ def customer_owner_required(f):
 
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        customer_id = kwargs.get("customer_id")
-        if not customer_id:
-            raise Exception("Missing customer_id.")
+        try:
+            customer_id = kwargs.get("customer_id")
+            if not customer_id:
+                raise Exception("Missing customer_id.")
 
-        user_uid = request.user.get("uid")
-        firestore_client: google.cloud.firestore.Client = firestore.client()
-        customer_snap = firestore_client.collection("customers").document(
-            customer_id
-        ).get(field_paths=["userId"])
+            user_uid = request.user.get("uid")
+            firestore_client: google.cloud.firestore.Client = firestore.client()
+            customer_snap = firestore_client.collection("customers").document(
+                customer_id
+            ).get(field_paths=["userId"])
 
-        if not customer_snap.exists:
-            raise Exception("Customer not found.")
+            if not customer_snap.exists:
+                raise Exception("Customer not found.")
 
-        owner_uid = customer_snap.get("userId")
-        if owner_uid != user_uid:
+            owner_uid = customer_snap.get("userId")
+            if owner_uid != user_uid:
+                raise Exception(
+                    "Unauthorized: user is not the owner of the customer.")
+        except Exception as e:
+            logger.error(f"customer_owner_required error: {e}")
             return jsonify({"error": "Unauthorized: access denied."}), 403
 
         return f(*args, **kwargs)
@@ -200,8 +213,116 @@ def signing_token_required(f):
             request.document_doc_ref = document_doc_ref
             request.invitation_doc_ref = invitation_snapshots[0].reference
         except Exception as e:
-            logger.error(f"Token verification error: {e}")
+            logger.error(f"signing_token_required error: {e}")
             return jsonify({"error": "Unauthorized"}), 401
+
+        return f(*args, **kwargs)
+
+    return decorated_function
+
+
+def company_permissions_required(f):
+    """
+    Require the user to be a member of the company to access certain company endpoints.
+    Use below @login_required so request.user is set.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        try:
+            company_id = kwargs.get("company_id")
+            if not company_id:
+                raise Exception("Company ID is required")
+
+            firestore_client: google.cloud.firestore.Client = firestore.client()
+            company_doc_ref = firestore_client.collection("companies").document(
+                company_id)
+
+            if not company_doc_ref.get().exists:
+                raise Exception("Company not found")
+
+            if company_doc_ref.id != request.user.get("companyId"):
+                raise Exception("Unauthorized: company ID mismatch.")
+
+            if request.user.get("status") != UserStatus.ACTIVE.value:
+                raise Exception(
+                    "Unauthorized: user is not have active status.")
+
+            request.company_doc_ref = company_doc_ref
+        except Exception as e:
+            logger.error(f"company_permissions_required error: {e}")
+            return jsonify({"error": "Unauthorized: access denied."}), 403
+
+        return f(*args, **kwargs)
+
+    return decorated_function
+
+
+def company_admin_required(f):
+    """
+    Require the user to have admin permissions to access certain company endpoints.
+    Use below @login_required so request.user is set.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        try:
+            company_id = kwargs.get("company_id")
+            if not company_id:
+                raise Exception("Company ID is required")
+
+            firestore_client: google.cloud.firestore.Client = firestore.client()
+            company_doc_ref = firestore_client.collection("companies").document(
+                company_id)
+
+            if not company_doc_ref.get().exists:
+                raise Exception("Company not found")
+
+            if company_doc_ref.id != request.user.get("companyId"):
+                raise Exception("Unauthorized: company ID mismatch.")
+
+            if request.user.get("role") != UserRole.ADMIN.value:
+                raise Exception("Unauthorized: user is not have admin role.")
+
+            if request.user.get("status") != UserStatus.ACTIVE.value:
+                raise Exception(
+                    "Unauthorized: user is not have active status.")
+
+            request.company_doc_ref = company_doc_ref
+        except Exception as e:
+            logger.error(f"company_admin_required error: {e}")
+            return jsonify({"error": "Unauthorized: access denied."}), 403
+
+        return f(*args, **kwargs)
+
+    return decorated_function
+
+
+def company_owner_required(f):
+    """
+    Require the user to be the owner of the company to access certain company endpoints.
+    Use below @login_required so request.user is set.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        try:
+            company_id = kwargs.get("company_id")
+            if not company_id:
+                raise Exception("Company ID is required")
+
+            firestore_client: google.cloud.firestore.Client = firestore.client()
+            company_doc_ref = firestore_client.collection("companies").document(
+                company_id)
+
+            if not company_doc_ref.get().exists:
+                raise Exception("Company not found")
+
+            if company_doc_ref.get().get("ownerUserId") != request.user.get("uid"):
+                raise Exception(
+                    "Unauthorized: user is not the owner of the company.")
+
+            request.company_doc_ref = company_doc_ref
+        except Exception as e:
+            logger.error(f"company_owner_required error: {e}")
+            return jsonify({"error": "Unauthorized: access denied."}), 403
 
         return f(*args, **kwargs)
 
