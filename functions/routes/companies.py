@@ -5,43 +5,10 @@ from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter
 
 from auth_decorator import login_required
 from logger import logger
+from google.cloud.firestore import DocumentReference
+from models.company import Company
 
 bp = Blueprint("companies", __name__)
-
-
-@bp.post("/companies/create")
-@login_required
-def create_company():
-    try:
-        user = request.user
-        user_uid = user.get("uid")
-        request_data = request.get_json()
-        company_name = request_data.get("name")
-
-        firestore_client: google.cloud.firestore.Client = firestore.client()
-        company_doc_ref = firestore_client.collection(
-            "companies").document()
-        company_id = company_doc_ref.id
-
-        company_json = {
-            "name": company_name,
-            "createdAt": SERVER_TIMESTAMP,
-            "ownerUserId": user_uid
-        }
-
-        company_doc_ref.set(company_json)
-
-        company_doc = company_doc_ref.get(field_paths=[
-            "name", "createdAt", "ownerUserId"])
-        company_json = company_doc.to_dict()
-        company_json["id"] = company_id
-        company_json["createdAt"] = company_doc.get(
-            "createdAt").isoformat()
-
-        return jsonify(company_json), 201
-    except Exception as e:
-        logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
 
 
 @bp.get("/companies/me")
@@ -51,21 +18,15 @@ def get_company_me():
         user = request.user
         user_uid = user.get("uid")
         firestore_client: google.cloud.firestore.Client = firestore.client()
-        company_docs = firestore_client.collection(
+        company_snapshots = firestore_client.collection(
             "companies").where(filter=FieldFilter("ownerUserId", "==", user_uid)).get()
 
-        company_json = {}
-        for company_doc in company_docs:
-            company_json = company_doc.to_dict()
-            company_json["id"] = company_doc.id
-            company_json["createdAt"] = company_doc.get(
-                "createdAt").isoformat()
-            break
+        if not company_snapshots:
+            raise Exception("Company not found")
 
-        if not company_json:
-            return jsonify({}), 404
+        company_doc_ref = company_snapshots[0].reference
 
-        return jsonify(company_json), 200
+        return jsonify(_get_company_json_for_response(company_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -90,13 +51,25 @@ def update_company_me():
             "name": company_name,
         })
 
-        company_doc = company_doc_ref.get(field_paths=[
-            "name", "ownerUserId", "createdAt"])
-        company_json = company_doc.to_dict()
-        company_json["id"] = company_id
-        company_json["createdAt"] = company_doc.get(
-            "createdAt").isoformat()
-        return jsonify(company_json), 200
+        return jsonify(_get_company_json_for_response(company_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+# ------------------------------------------------------------------------------------------------
+# Companies helper functions below this line
+# ------------------------------------------------------------------------------------------------
+
+def _get_company_json_for_response(company_doc_ref: DocumentReference) -> dict | None:
+    try:
+        company_json = company_doc_ref.get().to_dict()
+        company_json["id"] = company_doc_ref.id
+        company_json["createdAt"] = company_json.get("createdAt").isoformat()
+        company_json["statusUpdatedAt"] = company_json.get(
+            "statusUpdatedAt").isoformat()
+        company_obj = Company(**company_json)
+        return company_obj.model_dump()
+    except Exception as e:
+        logger.error(f"error: _get_company_json_for_response failed: {e}")
+        return None
