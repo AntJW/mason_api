@@ -166,3 +166,7 @@ def find_speaker_optimized(word_start, word_end, segments, start_times):
 
 def datetime_iso_or_none(value):
     return value.isoformat() if value is not None else None
+
+
+def clean_string(value: str) -> str:
+    return value.strip() if value is not None else None

@@ -7,9 +7,10 @@ from flask import Blueprint, jsonify, request
 from auth_decorator import login_required, customer_permissions_required, company_permissions_required
 from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter, DocumentReference
 from logger import logger
-from utility import is_valid_email, delete_from_storage
+from utility import delete_from_storage, clean_string
 from models.customer import Customer
-
+from routes.documents import remove_all_document_signatures
+from models.address import Address
 
 bp = Blueprint("customers", __name__)
 
@@ -34,31 +35,28 @@ def get_customer(customer_id):
 
 @bp.get("/customers")
 @login_required
+@company_permissions_required
 def get_customers():
     try:
-        user = request.user
-        user_uid = user.get("uid")
+        company_doc_ref = request.company_doc_ref
+
         firestore_client: google.cloud.firestore.Client = firestore.client()
-        customer_docs = firestore_client.collection(
-            "customers").where(filter=FieldFilter("userId", "==", user_uid)).get()
 
-        customers_list = []
-        for customer_doc in customer_docs:
-            customer_json = customer_doc.to_dict()
-            customers_list.append({
-                "id": customer_doc.id,
-                "displayName": customer_json.get("displayName"),
-                "firstName": customer_json.get("firstName"),
-                "lastName": customer_json.get("lastName"),
-                "email": customer_json.get("email"),
-                "phone": customer_json.get("phone"),
-                "address": customer_json.get("address"),
-                "userId": customer_json.get("userId"),
-                "status": customer_json.get("status"),
-                "createdAt": customer_json.get("createdAt").isoformat()
-            })
+        customer_snapshots = firestore_client.collection(
+            "customers").where(filter=FieldFilter("companyId", "==", company_doc_ref.id)).get()
 
-        return jsonify(customers_list), 200
+        customer_objs = []
+        for customer_snap in customer_snapshots:
+            customer_json = customer_snap.to_dict()
+            customer_json["id"] = customer_snap.id
+            customer_json["createdAt"] = customer_json.get(
+                "createdAt").isoformat()
+            customer_json["statusUpdatedAt"] = customer_json.get(
+                "statusUpdatedAt").isoformat()
+            customer_objs.append(Customer(**customer_json))
+
+        return jsonify([customer_obj.model_dump()
+                        for customer_obj in customer_objs]), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -78,22 +76,22 @@ def create_customer():
 
         customer_json = {
             "id": customers_doc_ref.id,
-            "displayName": request_data.get("displayName").strip(),
-            "firstName": request_data.get("firstName"),
-            "lastName": request_data.get("lastName"),
-            "email": request_data.get("email"),
-            "phone": request_data.get("phone"),
+            "displayName": clean_string(request_data.get("displayName")),
+            "firstName": clean_string(request_data.get("firstName")),
+            "lastName": clean_string(request_data.get("lastName")),
+            "email": clean_string(request_data.get("email")),
+            "phone": clean_string(request_data.get("phone")),
             "address": {
-                "street": request_data.get("street"),
+                "street": clean_string(request_data.get("street")),
                 "street2": request_data.get("street2"),
-                "city": request_data.get("city"),
-                "state": request_data.get("state"),
-                "postalCode": request_data.get("postalCode"),
-                "country": request_data.get("country"),
+                "city": clean_string(request_data.get("city")),
+                "state": clean_string(request_data.get("state")),
+                "postalCode": clean_string(request_data.get("postalCode")),
+                "country": clean_string(request_data.get("country")),
             },
             "createdByUser": user.get("uid"),
             "companyId": user.get("companyId"),
-            "status": request_data.get("status").strip().lower(),
+            "status": clean_string(request_data.get("status")).lower(),
             "statusUpdatedAt": "PLACEHOLDER_FOR_SERVER_TIMESTAMP",
             "createdAt": "PLACEHOLDER_FOR_SERVER_TIMESTAMP"
         }
@@ -111,31 +109,36 @@ def create_customer():
         return jsonify({"error": "Error creating customer"}), 500
 
 
-@bp.put("/customers/<customer_id>/update")
+@bp.put("/customers/<customer_id>")
 @login_required
+@customer_permissions_required
 def update_customer(customer_id):
     try:
-        user = request.user
-        user_uid = user.get("uid")
+        customer_doc_ref = request.customer_doc_ref
         request_data = request.get_json()
 
-        displayName = request_data.get("displayName")
-        firstName = request_data.get("firstName")
-        lastName = request_data.get("lastName")
-        email = request_data.get("email")
-        phone = request_data.get("phone")
+        displayName = clean_string(request_data.get("displayName"))
+        firstName = clean_string(request_data.get("firstName"))
+        lastName = clean_string(request_data.get("lastName"))
+        email = clean_string(request_data.get("email"))
+        phone = clean_string(request_data.get("phone"))
         address = request_data.get("address")
-        street = address.get("street")
-        street2 = address.get("street2")
-        city = address.get("city")
-        state = address.get("state")
-        postalCode = address.get("postalCode")
-        country = address.get("country")
-        status = request_data.get("status")
+        street = clean_string(address.get("street"))
+        street2 = clean_string(address.get("street2"))
+        city = clean_string(address.get("city"))
+        state = clean_string(address.get("state"))
+        postalCode = clean_string(address.get("postalCode"))
+        country = clean_string(address.get("country"))
+        status = clean_string(request_data.get("status")).lower()
 
-        firestore_client: google.cloud.firestore.Client = firestore.client()
-        customer_doc_ref = firestore_client.collection(
-            "customers").document(customer_id)
+        clean_address_json = Address(
+            street=street,
+            street2=street2,
+            city=city,
+            state=state,
+            postalCode=postalCode,
+            country=country
+        ).model_dump()
 
         customer_doc_ref.update({
             "displayName": displayName,
@@ -143,44 +146,51 @@ def update_customer(customer_id):
             "lastName": lastName,
             "email": email,
             "phone": phone,
-            "address": address,
-            "status": status
+            "address": clean_address_json,
         })
-        customer_doc = customer_doc_ref.get(field_paths=[
-                                            "displayName", "firstName", "lastName", "email", "phone", "address", "status", "userId", "createdAt"])
-        customer_json = customer_doc.to_dict()
-        customer_json["id"] = customer_doc_ref.id
-        customer_json["createdAt"] = customer_doc.get("createdAt").isoformat()
-        return jsonify(customer_json), 200
+
+        if status != customer_doc_ref.get().get("status"):
+            customer_doc_ref.update({
+                "status": status,
+                "statusUpdatedAt": SERVER_TIMESTAMP
+            })
+
+        return jsonify(_get_customer_json_for_response(customer_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
+        return jsonify({"error": "Error updating customer"}), 500
 
 
-@bp.delete("/customers/<customer_id>/delete")
+@bp.delete("/customers/<customer_id>")
 @login_required
+@customer_permissions_required
 def delete_customer(customer_id):
     try:
-        user = request.user
-        user_uid = user.get("uid")
+        customer_doc_ref = request.customer_doc_ref
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
-        conversations_docs = firestore_client.collection(
+
+        conversations_snapshots = firestore_client.collection(
             "conversations").where(filter=FieldFilter("customerId", "==", customer_id)).get()
 
-        for conversation_doc in conversations_docs:
-            conversation_audio_storage_path = conversation_doc.get(
+        for conversation_snap in conversations_snapshots:
+            conversation_audio_storage_path = conversation_snap.get(
                 "audioStoragePath")
             delete_from_storage(conversation_audio_storage_path)
-            conversation_doc.delete()
+            conversation_snap.reference.delete()
 
-        customer_doc_ref = firestore_client.collection(
-            "customers").document(customer_id)
+        documents_snapshots = firestore_client.collection(
+            "documents").where(filter=FieldFilter("customerId", "==", customer_id)).get()
+
+        for document_snap in documents_snapshots:
+            remove_all_document_signatures(document_snap.reference)
+            document_snap.reference.delete()
 
         customer_doc_ref.delete()
         return jsonify({}), 200
     except Exception as e:
-        logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"error: delete_customer: {e}")
+        return jsonify({"error": "Error deleting customer"}), 500
 
 
 # ------------------------------------------------------------------------------------------------
