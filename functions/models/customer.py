@@ -16,7 +16,7 @@ class Customer(BaseModel):
     firstName: str | None = None
     lastName: str | None = None
     phone: str | None = None
-    email: EmailStr
+    email: EmailStr | None = None
     address: Address | None = None
     createdByUser: str
     companyId: str

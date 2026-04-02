@@ -74,7 +74,10 @@ def create_customer():
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
 
+        customers_doc_ref = firestore_client.collection("customers").document()
+
         customer_json = {
+            "id": customers_doc_ref.id,
             "displayName": request_data.get("displayName").strip(),
             "firstName": request_data.get("firstName"),
             "lastName": request_data.get("lastName"),
@@ -98,8 +101,6 @@ def create_customer():
         customer_json = Customer(**customer_json).model_dump(exclude={
             "id", "createdAt", "statusUpdatedAt",
         })
-
-        customers_doc_ref = firestore_client.collection("customers").document()
 
         customers_doc_ref.set(
             {**customer_json, "createdAt": SERVER_TIMESTAMP, "statusUpdatedAt": SERVER_TIMESTAMP})
