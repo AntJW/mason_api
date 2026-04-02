@@ -4,10 +4,12 @@ from firebase_admin import firestore
 import google.cloud.firestore
 from flask import Blueprint, jsonify, request
 
-from auth_decorator import login_required
-from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter
+from auth_decorator import login_required, customer_permissions_required, company_permissions_required
+from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter, DocumentReference
 from logger import logger
 from utility import is_valid_email, delete_from_storage
+from models.customer import Customer
+
 
 bp = Blueprint("customers", __name__)
 
@@ -21,18 +23,10 @@ class CustomerStatus(Enum):
 
 @bp.get("/customers/<customer_id>")
 @login_required
+@customer_permissions_required
 def get_customer(customer_id):
     try:
-        firestore_client: google.cloud.firestore.Client = firestore.client()
-        customer_doc_ref = firestore_client.collection(
-            "customers").document(customer_id)
-        customer_doc = customer_doc_ref.get(field_paths=[
-                                            "displayName", "firstName", "lastName", "email", "phone", "address", "status", "userId", "createdAt"])
-        customer_json = customer_doc.to_dict()
-        customer_json["createdAt"] = customer_doc.get(
-            "createdAt").isoformat()
-        customer_json["id"] = customer_doc_ref.id
-        return jsonify(customer_json), 200
+        return jsonify(_get_customer_json_for_response(request.customer_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -70,27 +64,22 @@ def get_customers():
         return jsonify({"error": str(e)}), 500
 
 
-@bp.post("/customer/create")
+@bp.post("/customers")
 @login_required
+@company_permissions_required
 def create_customer():
     try:
         user = request.user
-        user_uid = user.get("uid")
         request_data = request.get_json()
-        email = request_data.get("email")
-        if email != None and not is_valid_email(email):
-            raise ValueError("Invalid email address")
 
-        status = request_data["status"]
-        if status not in [status.value for status in CustomerStatus]:
-            raise ValueError("Invalid status")
+        firestore_client: google.cloud.firestore.Client = firestore.client()
 
         customer_json = {
-            "displayName": request_data["displayName"].strip(),
+            "displayName": request_data.get("displayName").strip(),
             "firstName": request_data.get("firstName"),
             "lastName": request_data.get("lastName"),
-            "email": email,
-            "phone": request_data["phone"],
+            "email": request_data.get("email"),
+            "phone": request_data.get("phone"),
             "address": {
                 "street": request_data.get("street"),
                 "street2": request_data.get("street2"),
@@ -99,28 +88,26 @@ def create_customer():
                 "postalCode": request_data.get("postalCode"),
                 "country": request_data.get("country"),
             },
-            "status": request_data["status"].lower(),
-            "userId": user_uid,
-            "createdAt": SERVER_TIMESTAMP
+            "createdByUser": user.get("uid"),
+            "companyId": user.get("companyId"),
+            "status": request_data.get("status").strip().lower(),
+            "statusUpdatedAt": "PLACEHOLDER_FOR_SERVER_TIMESTAMP",
+            "createdAt": "PLACEHOLDER_FOR_SERVER_TIMESTAMP"
         }
 
-        firestore_client: google.cloud.firestore.Client = firestore.client()
+        customer_json = Customer(**customer_json).model_dump(exclude={
+            "id", "createdAt", "statusUpdatedAt",
+        })
 
-        # creates a reference with an auto-generated ID
         customers_doc_ref = firestore_client.collection("customers").document()
-        customer_id = customers_doc_ref.id  # get the auto-generated document ID
 
-        customers_doc_ref.set(customer_json)
+        customers_doc_ref.set(
+            {**customer_json, "createdAt": SERVER_TIMESTAMP, "statusUpdatedAt": SERVER_TIMESTAMP})
 
-        customer_created_at_value = firestore_client.collection(
-            "customers").document(customer_id).get().get("createdAt")
-        customer_json["createdAt"] = customer_created_at_value.isoformat()
-
-        customer_json["id"] = customer_id
-        return jsonify(customer_json), 201
+        return jsonify(_get_customer_json_for_response(customers_doc_ref)), 201
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error creating customer"}), 500
 
 
 @bp.put("/customers/<customer_id>/update")
@@ -193,3 +180,21 @@ def delete_customer(customer_id):
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+# ------------------------------------------------------------------------------------------------
+# Customers helper functions below this line
+# ------------------------------------------------------------------------------------------------
+
+def _get_customer_json_for_response(customer_doc_ref: DocumentReference) -> dict | None:
+    try:
+        customer_json = customer_doc_ref.get().to_dict()
+        customer_json["id"] = customer_doc_ref.id
+        customer_json["createdAt"] = customer_json.get("createdAt").isoformat()
+        customer_json["statusUpdatedAt"] = customer_json.get(
+            "statusUpdatedAt").isoformat()
+
+        return Customer(**customer_json).model_dump()
+    except Exception as e:
+        logger.error(f"error: _get_customer_json_for_response failed: {e}")
+        return None

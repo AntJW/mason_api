@@ -1,7 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from enum import Enum
 from models.address import Address
-from models.document import Document
 
 
 class CustomerStatus(str, Enum):
@@ -17,8 +16,10 @@ class Customer(BaseModel):
     firstName: str | None = None
     lastName: str | None = None
     phone: str | None = None
-    email: str | None = None
+    email: EmailStr
     address: Address | None = None
-    userId: str
+    createdByUser: str
+    companyId: str
     status: CustomerStatus
+    statusUpdatedAt: str  # isoformat string
     createdAt: str  # isoformat string

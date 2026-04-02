@@ -159,6 +159,41 @@ def customer_owner_required(f):
     return decorated_function
 
 
+def customer_permissions_required(f):
+    """Require user to be member of the company that owns the customer to access certain customer endpoints.
+    Use only below ``@login_required`` so ``request.user`` is set.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        try:
+            customer_id = kwargs.get("customer_id")
+            if not customer_id:
+                raise Exception("Missing customer_id.")
+
+            firestore_client: google.cloud.firestore.Client = firestore.client()
+
+            customer_doc_ref = firestore_client.collection("customers").document(
+                customer_id
+            )
+            customer_snap = customer_doc_ref.get()
+
+            if not customer_snap.exists:
+                raise Exception("Customer not found.")
+
+            if customer_snap.get("companyId") != request.user.get("companyId"):
+                raise Exception(
+                    "Unauthorized: user is not a member of the company that owns the customer.")
+
+            request.customer_doc_ref = customer_doc_ref
+        except Exception as e:
+            logger.error(f"customer_permissions_required error: {e}")
+            return jsonify({"error": "Unauthorized: access denied."}), 403
+
+        return f(*args, **kwargs)
+
+    return decorated_function
+
+
 # Used to verify that the signer has authorized token to sign the document.
 def signing_token_required(f):
     @wraps(f)

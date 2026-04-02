@@ -20,10 +20,10 @@ def get_company(company_id):
         return jsonify({"error": "Error getting company"}), 500
 
 
-@bp.put("/companies/<company_id>")
+@bp.put("/companies/<company_id>/name")
 @login_required
 @company_owner_required
-def update_company(company_id):
+def update_company_name(company_id):
     try:
         request_data = request.get_json()
         company_name = request_data.get("name")
