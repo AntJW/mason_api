@@ -124,41 +124,6 @@ def login_or_anonymous_required(f):
     return decorated_function
 
 
-def customer_owner_required(f):
-    """Require the URL ``customer_id`` to belong to ``request.user`` (Firestore ``userId``).
-
-    Use only below ``@login_required`` so ``request.user`` is set.
-    """
-
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        try:
-            customer_id = kwargs.get("customer_id")
-            if not customer_id:
-                raise Exception("Missing customer_id.")
-
-            user_uid = request.user.get("uid")
-            firestore_client: google.cloud.firestore.Client = firestore.client()
-            customer_snap = firestore_client.collection("customers").document(
-                customer_id
-            ).get(field_paths=["userId"])
-
-            if not customer_snap.exists:
-                raise Exception("Customer not found.")
-
-            owner_uid = customer_snap.get("userId")
-            if owner_uid != user_uid:
-                raise Exception(
-                    "Unauthorized: user is not the owner of the customer.")
-        except Exception as e:
-            logger.error(f"customer_owner_required error: {e}")
-            return jsonify({"error": "Unauthorized: access denied."}), 403
-
-        return f(*args, **kwargs)
-
-    return decorated_function
-
-
 def customer_permissions_required(f):
     """Require user to be member of the company that owns the customer to access certain customer endpoints.
     Use only below ``@login_required`` so ``request.user`` is set.

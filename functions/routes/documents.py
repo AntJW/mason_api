@@ -11,7 +11,7 @@ from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter, Query
 from google.cloud.firestore_v1.field_path import FieldPath
 from qdrant_client import models
 from auth_decorator import (
-    login_required, customer_owner_required, signing_token_required)
+    login_required, signing_token_required, customer_permissions_required)
 from clients.email_client import EmailClient
 from clients.llm_client import LLMClient
 from clients.vector_db_client import VectorDBClient
@@ -39,7 +39,7 @@ bp = Blueprint("documents", __name__)
 
 @bp.post("/customers/<customer_id>/documents/create")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def create_document(customer_id):
     try:
         user = request.user
@@ -112,7 +112,7 @@ def create_document(customer_id):
 
 @bp.get("/customers/<customer_id>/documents")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def get_documents(customer_id):
     try:
         firestore_client: google.cloud.firestore.Client = firestore.client()
@@ -132,7 +132,7 @@ def get_documents(customer_id):
 
 @bp.get("/customers/<customer_id>/documents/<document_id>")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def get_document(customer_id, document_id):
     try:
         firestore_client: google.cloud.firestore.Client = firestore.client()
@@ -150,7 +150,7 @@ def get_document(customer_id, document_id):
 
 @bp.put("/customers/<customer_id>/documents/<document_id>/update")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def update_document(customer_id, document_id):
     try:
         user = request.user
@@ -193,7 +193,7 @@ def update_document(customer_id, document_id):
 
 @bp.post("/customers/<customer_id>/documents/<document_id>/signers")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def create_document_signer(customer_id, document_id):
     try:
         request_data = request.get_json()
@@ -229,7 +229,7 @@ def create_document_signer(customer_id, document_id):
 
 @bp.delete("/customers/<customer_id>/documents/<document_id>/signers/<signer_id>")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def delete_document_signer(customer_id, document_id, signer_id):
     try:
         firestore_client: google.cloud.firestore.Client = firestore.client()
@@ -272,7 +272,7 @@ def delete_document_signer(customer_id, document_id, signer_id):
 
 @bp.put("/customers/<customer_id>/documents/<document_id>/signers/<signer_id>")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def update_document_signer(customer_id, document_id, signer_id):
     try:
         request_data = request.get_json()
@@ -309,7 +309,7 @@ def update_document_signer(customer_id, document_id, signer_id):
 
 @bp.put("/customers/<customer_id>/documents/<document_id>/signature-boxes")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def update_document_signature_boxes(customer_id, document_id):
     try:
         request_data = request.get_json()
@@ -349,7 +349,7 @@ def update_document_signature_boxes(customer_id, document_id):
 
 @bp.post("/customers/<customer_id>/documents/<document_id>/signatures")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def create_user_document_signature(customer_id, document_id):
     try:
         user = request.user
@@ -445,7 +445,7 @@ def create_user_document_signature(customer_id, document_id):
 
 @bp.post("/customers/<customer_id>/documents/<document_id>/signatures/invitations")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def send_signature_invitations(customer_id, document_id):
     try:
         user = request.user
@@ -513,7 +513,7 @@ def send_signature_invitations(customer_id, document_id):
 
 @bp.put("/customers/<customer_id>/documents/<document_id>/signatures/invitations/cancel")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def cancel_signature_invitations(customer_id, document_id):
     try:
         user = request.user
@@ -580,7 +580,7 @@ def cancel_signature_invitations(customer_id, document_id):
 
 @bp.delete("/customers/<customer_id>/documents/<document_id>/signatures")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def remove_user_document_signature(customer_id, document_id):
     try:
         user = request.user
@@ -650,7 +650,7 @@ def remove_user_document_signature(customer_id, document_id):
 
 @bp.post("/customers/<customer_id>/documents/<document_id>/signers/<signer_id>/reminder")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def send_signature_reminder(customer_id, document_id, signer_id):
     try:
         user = request.user
@@ -745,7 +745,7 @@ def send_signature_reminder(customer_id, document_id, signer_id):
 
 @bp.delete("/customers/<customer_id>/documents/<document_id>/delete")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def delete_document(customer_id, document_id):
     try:
         firestore_client: google.cloud.firestore.Client = firestore.client()
@@ -770,7 +770,7 @@ def delete_document(customer_id, document_id):
 
 @bp.post("/customers/<customer_id>/documents/ai/generate")
 @login_required
-@customer_owner_required
+@customer_permissions_required
 def ai_generate_document_text(customer_id):
     try:
         user = request.user
