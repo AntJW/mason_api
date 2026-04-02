@@ -9,14 +9,14 @@ import google.cloud.firestore
 import requests
 from firebase_admin import firestore
 from flask import Blueprint, jsonify, request, Response, stream_with_context
-from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter
+from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter, DocumentReference
 from qdrant_client import models
-
-from auth_decorator import login_required
+from auth_decorator import login_required, customer_permissions_required
 from clients.llm_client import LLMClient
 from clients.vector_db_client import VectorDBClient
 from logger import logger
 from markdown_to_delta import convert_markdown_to_delta
+from models.conversation import Conversation
 from utility import (
     convert_audio_sample_rate,
     delete_tmp_file,
@@ -41,6 +41,7 @@ class ConversationStatus(Enum):
 
 @bp.post("/customers/<customer_id>/conversations/create")
 @login_required
+@customer_permissions_required
 def create_conversation(customer_id):
     try:
         user = request.user
@@ -86,6 +87,7 @@ def create_conversation(customer_id):
 
 @bp.post("/customers/<customer_id>/conversations/<conversation_id>/transcribe")
 @login_required
+@customer_permissions_required
 def transcribe_conversation(customer_id, conversation_id):
     try:
         user = request.user
@@ -182,6 +184,7 @@ def transcribe_conversation(customer_id, conversation_id):
 
 @bp.post("/customers/<customer_id>/conversations/<conversation_id>/summarize")
 @login_required
+@customer_permissions_required
 def summarize_conversation(customer_id, conversation_id):
     try:
         user = request.user
@@ -273,6 +276,7 @@ def summarize_conversation(customer_id, conversation_id):
 
 @bp.get("/customers/<customer_id>/conversations/<conversation_id>")
 @login_required
+@customer_permissions_required
 def get_conversation(customer_id, conversation_id):
     try:
         firestore_client: google.cloud.firestore.Client = firestore.client()
@@ -292,6 +296,7 @@ def get_conversation(customer_id, conversation_id):
 
 @bp.get("/customers/<customer_id>/conversations")
 @login_required
+@customer_permissions_required
 def get_conversations(customer_id):
     try:
         firestore_client: google.cloud.firestore.Client = firestore.client()
@@ -323,6 +328,7 @@ def get_conversations(customer_id):
 
 @bp.put("/customers/<customer_id>/conversations/<conversation_id>/summary/update")
 @login_required
+@customer_permissions_required
 def update_conversation_summary(customer_id, conversation_id):
     try:
         user = request.user
@@ -355,6 +361,7 @@ def update_conversation_summary(customer_id, conversation_id):
 
 @bp.put("/customers/<customer_id>/conversations/<conversation_id>/header/update")
 @login_required
+@customer_permissions_required
 def update_conversation_header(customer_id, conversation_id):
     try:
         user = request.user
@@ -384,6 +391,7 @@ def update_conversation_header(customer_id, conversation_id):
 
 @bp.delete("/customers/<customer_id>/conversations/<conversation_id>/delete")
 @login_required
+@customer_permissions_required
 def delete_conversation(customer_id, conversation_id):
     try:
         user = request.user
@@ -407,6 +415,7 @@ def delete_conversation(customer_id, conversation_id):
 
 @bp.post("/customers/<customer_id>/ai/chat")
 @login_required
+@customer_permissions_required
 def ai_chat(customer_id):
     try:
         user = request.user
@@ -458,3 +467,22 @@ def ai_chat(customer_id):
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+# ------------------------------------------------------------------------------------------------
+# Conversations helper functions below this line
+# ------------------------------------------------------------------------------------------------
+
+
+def _get_conversation_json_for_response(conversation_doc_ref: DocumentReference) -> dict | None:
+    try:
+        conversation_json = conversation_doc_ref.get().to_dict()
+        conversation_json["id"] = conversation_doc_ref.id
+        conversation_json["createdAt"] = conversation_json.get(
+            "createdAt").isoformat()
+
+        conversation_json = Conversation(**conversation_json).model_dump()
+        return conversation_json
+    except Exception as e:
+        logger.error(f"error: _get_conversation_json_for_response failed: {e}")
+        return None
