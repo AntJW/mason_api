@@ -184,6 +184,9 @@ def customer_permissions_required(f):
                 raise Exception(
                     "Unauthorized: user is not a member of the company that owns the customer.")
 
+            if request.user.get("status") != UserStatus.ACTIVE.value:
+                raise Exception("User is not active.")
+
             request.customer_doc_ref = customer_doc_ref
         except Exception as e:
             logger.error(f"customer_permissions_required error: {e}")
@@ -194,8 +197,10 @@ def customer_permissions_required(f):
     return decorated_function
 
 
-# Used to verify that the signer has authorized token to sign the document.
 def signing_token_required(f):
+    """
+    Used to verify that the signer has authorized token to sign the document.
+    """
     @wraps(f)
     def decorated_function(*args, **kwargs):
         try:
@@ -264,7 +269,8 @@ def company_permissions_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         try:
-            company_id = kwargs.get("company_id")
+            company_id = kwargs.get(
+                "company_id") or request.user.get("companyId")
             if not company_id:
                 raise Exception("Company ID is required")
 
