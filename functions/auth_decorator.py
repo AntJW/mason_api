@@ -50,10 +50,48 @@ def login_required(f):
     return decorated_function
 
 
-# Email link user or Firebase Auth anonymous user required. Used in special cases where
-# an Firebase auth anynomous user can access the api endpoint, like for getting data for
-# the landing page of the website, or from a user invite page.
+def new_user_auth(f):
+    """
+    NOTE: This decororator should ONLY be used for create_new_user_properties_me endpoint. That endpoint is 
+    creates a new user properties in the database and return the user object. The @login_required decorator 
+    requires user properties to already be set, hence the need for this one off decorator.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Get the Authorization header
+        auth_header = request.headers.get("Authorization")
+
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise Exception("Unauthorized: No token provided.")
+
+        # Extract the token
+        id_token = auth_header.split("Bearer ")[1]
+
+        try:
+            # Verify the token
+            decoded_token = auth.verify_id_token(id_token)
+
+            # Deny access to anonymous users
+            if decoded_token.get('firebase', {}).get('sign_in_provider') == 'anonymous':
+                raise Exception(
+                    "Unauthorized: Anonymous users are not allowed to access this endpoint.")
+
+            request.user = decoded_token  # Attach user info to request
+        except Exception as e:
+            logger.error(f"Token verification error: {e}")
+            return jsonify({"error": "Unauthorized: Invalid or expired token."}), 401
+
+        return f(*args, **kwargs)
+
+    return decorated_function
+
+
 def login_or_anonymous_required(f):
+    """
+    Email link user or Firebase Auth anonymous user required. Used in special cases where
+    an Firebase auth anynomous user can access the api endpoint, like for getting data for
+    the landing page of the website, or from a user invite page.
+    """
     @wraps(f)
     def decorated_function(*args, **kwargs):
         # Get the Authorization header

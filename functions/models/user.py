@@ -1,4 +1,16 @@
 from pydantic import BaseModel
+from enum import Enum
+
+
+class UserRole(str, Enum):
+    ADMIN = "admin"
+    STAFF = "staff"
+
+
+class UserStatus(str, Enum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    INACTIVE = "inactive"
 
 
 class User(BaseModel):
@@ -7,4 +19,8 @@ class User(BaseModel):
     firstName: str
     lastName: str
     email: str
+    companyId: str
+    role: UserRole
+    status: UserStatus
+    statusUpdatedAt: str  # isoformat string
     createdAt: str  # isoformat string
