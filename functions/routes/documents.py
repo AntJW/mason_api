@@ -917,7 +917,7 @@ def create_signer_document_signature(document_id, token):
 
         # Upload signature image to storage
         tmp_path = save_file_to_tmp(signature_image_file)
-        signature_image_path = f"customers/{document_doc_ref.get().get("customerId")}/documents/{document_id}/signatures/{uuid.uuid4()}.png"
+        signature_image_path = f"companies/{company_id}/customers/{document_doc_ref.get().get("customerId")}/documents/{document_id}/signatures/{uuid.uuid4()}.png"
         upload_to_storage(tmp_path, signature_image_path,
                           content_type="image/png")
         delete_tmp_file(tmp_path)

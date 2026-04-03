@@ -41,13 +41,13 @@ def create_conversation(customer_id):
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
 
-        local_tmp_file_path = save_file_to_tmp(audio_file)
-
-        storage_file_path = f"audio/customers/{customer_id}/{uuid.uuid4()}.m4a"
-        upload_to_storage(local_tmp_file_path, storage_file_path)
-
         conversation_doc_ref = firestore_client.collection(
             "conversations").document()
+
+        local_tmp_file_path = save_file_to_tmp(audio_file)
+
+        storage_file_path = f"companies/{user.get("companyId")}/customers/{customer_id}/conversations/{conversation_doc_ref.id}/audio/{uuid.uuid4()}.m4a"
+        upload_to_storage(local_tmp_file_path, storage_file_path)
 
         conversation_json = Conversation(id=conversation_doc_ref.id,
                                          customerId=customer_id, audioStoragePath=storage_file_path,
