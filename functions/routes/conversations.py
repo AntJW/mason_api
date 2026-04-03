@@ -2,7 +2,6 @@ import json
 import os
 import re
 import uuid
-from enum import Enum
 from itertools import chain
 
 import google.cloud.firestore
@@ -16,7 +15,7 @@ from clients.llm_client import LLMClient
 from clients.vector_db_client import VectorDBClient
 from logger import logger
 from markdown_to_delta import convert_markdown_to_delta
-from models.conversation import Conversation
+from models.conversation import Conversation, Transcript, ConversationStatus
 from utility import (
     convert_audio_sample_rate,
     delete_tmp_file,
@@ -30,22 +29,12 @@ from utility import (
 bp = Blueprint("conversations", __name__)
 
 
-class ConversationStatus(Enum):
-    UPLOADED = "uploaded"
-    TRANSCRIBED = "transcribed"
-    SUMMARIZED = "summarized"
-    COMPLETED = "completed"
-    UNDEFINED = "undefined"
-    ERROR = "error"
-
-
 @bp.post("/customers/<customer_id>/conversations/create")
 @login_required
 @customer_permissions_required
 def create_conversation(customer_id):
     try:
         user = request.user
-        user_uid = user.get("uid")
         request_form = request.form
         duration = int(request_form.get("duration"))
         audio_file = request.files["file"]
@@ -59,30 +48,24 @@ def create_conversation(customer_id):
 
         conversation_doc_ref = firestore_client.collection(
             "conversations").document()
-        conversation_id = conversation_doc_ref.id
 
-        conversation_json = {
-            "customerId": customer_id,
-            "audioStoragePath": storage_file_path,
-            "createdAt": SERVER_TIMESTAMP,
-            "duration": duration,
-            "status": ConversationStatus.UPLOADED.value
-        }
+        conversation_json = Conversation(id=conversation_doc_ref.id,
+                                         customerId=customer_id, audioStoragePath=storage_file_path,
+                                         duration=duration, createdByUserId=user.get("uid"), createdAt="PLACEHOLDER_FOR_SERVER_TIMESTAMP",
+                                         status=ConversationStatus.UPLOADED).model_dump(exclude={
+                                             "id", "createdAt",
+                                         })
 
-        conversation_doc_ref.set(conversation_json)
+        conversation_doc_ref.set({
+            **conversation_json,
+            "createdAt": SERVER_TIMESTAMP
+        })
 
-        conversation_doc = conversation_doc_ref.get(
-            field_paths=["customerId", "audioStoragePath", "createdAt", "duration", "status"])
-        conversation_json = conversation_doc.to_dict()
-        conversation_json["createdAt"] = conversation_doc.get(
-            "createdAt").isoformat()
-        conversation_json["id"] = conversation_id
-
-        return jsonify(conversation_json), 201
+        return jsonify(_get_conversation_json_for_response(conversation_doc_ref)), 201
     except Exception as e:
         conversation_doc_ref.delete()
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error creating conversation"}), 500
 
 
 @bp.post("/customers/<customer_id>/conversations/<conversation_id>/transcribe")
@@ -91,16 +74,13 @@ def create_conversation(customer_id):
 def transcribe_conversation(customer_id, conversation_id):
     try:
         user = request.user
-        user_uid = user.get("uid")
         firestore_client: google.cloud.firestore.Client = firestore.client()
         conversation_doc_ref = firestore_client.collection(
             "conversations").document(conversation_id)
-        conversation_doc = conversation_doc_ref.get(field_paths=[
-                                                    "audioStoragePath"])
+        conversation_snap = conversation_doc_ref.get()
 
-        audio_storage_path = conversation_doc.get("audioStoragePath")
-
-        local_tmp_file_path = download_from_storage(audio_storage_path)
+        local_tmp_file_path = download_from_storage(
+            conversation_snap.get("audioStoragePath"))
 
         wav_bytes_io = convert_audio_sample_rate(
             local_tmp_file_path, sample_rate=16000)
@@ -121,7 +101,7 @@ def transcribe_conversation(customer_id, conversation_id):
             for segment in transcribe_api_data["transcript"]["segments"]
         )
 
-        merged_segments = []
+        merged_segments: list[Transcript] = []
         merged_segments_string = ""
         for word_info in all_transcript_words:
             speaker = find_speaker_optimized(
@@ -130,21 +110,19 @@ def transcribe_conversation(customer_id, conversation_id):
                 diarization_segments,
                 diarization_start_times
             )
-            if merged_segments and speaker == merged_segments[-1]["speaker"]:
-                # Same speaker as previous - update the end time of the last segment
-                merged_segments[-1]["end"] = word_info["end"]
-                merged_segments[-1]["text"] += f"{word_info['word']}"
+            if merged_segments and speaker == merged_segments[-1].speaker:
+                merged_segments[-1].end = word_info["end"]
+                merged_segments[-1].text += f"{word_info['word']}"
             else:
-                # New speaker - append a new segment
-                merged_segments.append({
-                    "start": word_info["start"],
-                    "end": word_info["end"],
-                    "speaker": speaker,
-                    "text": word_info["word"].lstrip()
-                })
+                merged_segments.append(Transcript(
+                    start=word_info["start"],
+                    end=word_info["end"],
+                    speaker=speaker,
+                    text=word_info["word"].lstrip()
+                ))
 
         merged_segments_string = "\n".join(
-            f"{segment['speaker']}: {segment['text']}"
+            f"{segment.speaker}: {segment.text}"
             for segment in merged_segments
         )
 
@@ -152,34 +130,36 @@ def transcribe_conversation(customer_id, conversation_id):
         vector_db_client.upload_documents([{
             "content": merged_segments_string,
             "type": "conversation_transcript",
-            "userId": user_uid,
+            "companyId": user.get("companyId"),
             "customerId": customer_id,
         }])
 
-        conversation_doc_ref.update({
-            "transcriptRaw": transcribe_api_data["transcript"]["text"],
-            # list of transcript segments (start, end, text)
-            "transcriptSegments": transcribe_api_data["transcript"]["segments"],
-            # list of speaker segments (start, end, speaker)
-            "speakerSegments": transcribe_api_data["speakers"],
-            "transcript": merged_segments,
-            "language": transcribe_api_data["transcript"]["language"],
-            "status": "transcribed"
-        })
-
-        response_doc = conversation_doc_ref.get(field_paths=[
-            "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript", "status"])
-        response_dict = response_doc.to_dict()
-        response_dict["createdAt"] = response_doc.get(
+        conversation_json = conversation_snap.to_dict()
+        conversation_json["id"] = conversation_snap.id
+        conversation_json["createdAt"] = conversation_json.get(
             "createdAt").isoformat()
-        response_dict["id"] = conversation_id
+        # Update values in conversation json
+        conversation_json["transcript"] = merged_segments
+        conversation_json["status"] = ConversationStatus.TRANSCRIBED
+
+        conversation_obj = Conversation(**conversation_json)
+
+        conversation_doc_ref.update(
+            {
+                **conversation_obj.model_dump(include={"transcript", "status"}),
+                "transcriptRaw": transcribe_api_data["transcript"]["text"],
+                "transcriptSegments": transcribe_api_data["transcript"]["segments"],
+                "speakerSegments": transcribe_api_data["speakers"],
+                "language": transcribe_api_data["transcript"]["language"],
+            }
+        )
 
         delete_tmp_file(local_tmp_file_path)
 
-        return jsonify(response_dict), 200
+        return jsonify(_get_conversation_json_for_response(conversation_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error transcribing conversation"}), 500
 
 
 @bp.post("/customers/<customer_id>/conversations/<conversation_id>/summarize")
@@ -188,14 +168,12 @@ def transcribe_conversation(customer_id, conversation_id):
 def summarize_conversation(customer_id, conversation_id):
     try:
         user = request.user
-        user_uid = user.get("uid")
         firestore_client: google.cloud.firestore.Client = firestore.client()
         conversation_doc_ref = firestore_client.collection(
             "conversations").document(conversation_id)
-        conversation_doc = conversation_doc_ref.get(field_paths=[
-                                                    "transcriptRaw", "transcriptSegments", "speakerSegments", "transcript", "language"])
+        conversation_snap = conversation_doc_ref.get()
 
-        transcript = conversation_doc.get("transcript")
+        transcript = conversation_snap.get("transcript")
         merged_segments_string = ""
         for segment in transcript:
             merged_segments_string += f"{segment.get('speaker')}: {segment.get('text')}\n"
@@ -244,34 +222,37 @@ def summarize_conversation(customer_id, conversation_id):
         summary_delta = convert_markdown_to_delta(
             llm_api_response_json["summaryMarkdown"])
 
-        conversation_doc_ref.update({
-            "header": llm_api_response_json["header"],
-            # plain text summary
-            "summaryRaw": llm_api_response_json["summary"],
-            # summary text in quill delta format
-            "summary": summary_delta,
-            "status": "summarized"
-        })
+        conversation_json = conversation_snap.to_dict()
+        conversation_json["id"] = conversation_snap.id
+        conversation_json["createdAt"] = conversation_json.get(
+            "createdAt").isoformat()
+
+        # Update values in conversation json
+        conversation_json["header"] = llm_api_response_json["header"]
+        conversation_json["summary"] = summary_delta
+        conversation_json["status"] = ConversationStatus.SUMMARIZED
+
+        conversation_obj = Conversation(**conversation_json)
+
+        conversation_doc_ref.update(
+            {
+                **conversation_obj.model_dump(include={"header", "summary", "status"}),
+                "summaryRaw": llm_api_response_json["summary"],
+            }
+        )
 
         vector_db_client = VectorDBClient()
         vector_db_client.upload_documents([{
             "content": llm_api_response_json["summary"],
             "type": "conversation_summary",
-            "userId": user_uid,
+            "companyId": user.get("companyId"),
             "customerId": customer_id,
         }])
 
-        response_doc = conversation_doc_ref.get(field_paths=[
-                                                "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript", "status"])
-        response_dict = response_doc.to_dict()
-        response_dict["createdAt"] = response_doc.get(
-            "createdAt").isoformat()
-        response_dict["id"] = conversation_id
-
-        return jsonify(response_dict), 200
+        return jsonify(_get_conversation_json_for_response(conversation_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error summarizing conversation"}), 500
 
 
 @bp.get("/customers/<customer_id>/conversations/<conversation_id>")
@@ -282,16 +263,10 @@ def get_conversation(customer_id, conversation_id):
         firestore_client: google.cloud.firestore.Client = firestore.client()
         conversation_doc_ref = firestore_client.collection(
             "conversations").document(conversation_id)
-        conversation_doc = conversation_doc_ref.get(field_paths=[
-                                                    "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript", "status"])
-        conversation_json = conversation_doc.to_dict()
-        conversation_json["createdAt"] = conversation_doc.get(
-            "createdAt").isoformat()
-        conversation_json["id"] = conversation_doc_ref.id
-        return jsonify(conversation_json), 200
+        return jsonify(_get_conversation_json_for_response(conversation_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error getting conversation"}), 500
 
 
 @bp.get("/customers/<customer_id>/conversations")
@@ -300,30 +275,21 @@ def get_conversation(customer_id, conversation_id):
 def get_conversations(customer_id):
     try:
         firestore_client: google.cloud.firestore.Client = firestore.client()
-        conversations_docs = firestore_client.collection(
+        conversations_snapshots = firestore_client.collection(
             "conversations").where(filter=FieldFilter("customerId", "==", customer_id)).get()
-        conversations_list = []
-        for conversation_doc in conversations_docs:
-            conversation_json = dict()
-            conversation_json["id"] = conversation_doc.id
-            conversation_json["customerId"] = conversation_doc.get(
-                "customerId")
-            conversation_json["audioStoragePath"] = conversation_doc.get(
-                "audioStoragePath")
-            conversation_json["header"] = conversation_doc.get("header")
-            conversation_json["summary"] = conversation_doc.get("summary")
-            conversation_json["transcript"] = conversation_doc.get(
-                "transcript")
-            conversation_json["createdAt"] = conversation_doc.get(
-                "createdAt").isoformat()
-            conversation_json["duration"] = conversation_doc.get("duration")
-            conversation_json["status"] = conversation_doc.get("status")
 
-            conversations_list.append(conversation_json)
-        return jsonify(conversations_list), 200
+        conversations_objs = []
+        for conversation_snap in conversations_snapshots:
+            conversation_json = conversation_snap.to_dict()
+            conversation_json["id"] = conversation_snap.id
+            conversation_json["createdAt"] = conversation_json.get(
+                "createdAt").isoformat()
+            conversations_objs.append(Conversation(**conversation_json))
+
+        return jsonify([conversation_obj.model_dump() for conversation_obj in conversations_objs]), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error getting conversations"}), 500
 
 
 @bp.put("/customers/<customer_id>/conversations/<conversation_id>/summary/update")
@@ -335,28 +301,31 @@ def update_conversation_summary(customer_id, conversation_id):
         user_uid = user.get("uid")
         request_data = request.get_json()
         summary = request_data.get("summary")
+        # TODO:Update in mason_app (flutter) to summaryRaw
         summary_raw = request_data.get("summaryPlainText")
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
         conversation_doc_ref = firestore_client.collection(
             "conversations").document(conversation_id)
 
-        conversation_doc_ref.update({
-            "summary": summary,
-            "summaryRaw": summary_raw,
-        })
-
-        conversation_doc = conversation_doc_ref.get(field_paths=[
-                                                    "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript", "status"])
-        conversation_json = conversation_doc.to_dict()
+        conversation_json = conversation_doc_ref.get().to_dict()
         conversation_json["id"] = conversation_doc_ref.id
-        conversation_json["createdAt"] = conversation_doc.get(
+        conversation_json["createdAt"] = conversation_json.get(
             "createdAt").isoformat()
 
-        return jsonify(conversation_json), 200
+        # Update conversation values
+        conversation_json["summary"] = summary
+
+        conversation_obj = Conversation(**conversation_json)
+
+        conversation_doc_ref.update({**conversation_obj.model_dump(include={
+            "summary",
+        }), "summaryRaw": summary_raw})
+
+        return jsonify(_get_conversation_json_for_response(conversation_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error updating conversation summary"}), 500
 
 
 @bp.put("/customers/<customer_id>/conversations/<conversation_id>/header/update")
@@ -364,29 +333,28 @@ def update_conversation_summary(customer_id, conversation_id):
 @customer_permissions_required
 def update_conversation_header(customer_id, conversation_id):
     try:
-        user = request.user
-        user_uid = user.get("uid")
         request_data = request.get_json()
         header = request_data.get("header")
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
         conversation_doc_ref = firestore_client.collection(
             "conversations").document(conversation_id)
-        conversation_doc_ref.update({
-            "header": header
-        })
 
-        conversation_doc = conversation_doc_ref.get(field_paths=[
-                                                    "customerId", "audioStoragePath", "createdAt", "duration", "header", "summary", "transcript", "status"])
-        conversation_json = conversation_doc.to_dict()
+        conversation_json = conversation_doc_ref.get().to_dict()
         conversation_json["id"] = conversation_doc_ref.id
-        conversation_json["createdAt"] = conversation_doc.get(
+        conversation_json["createdAt"] = conversation_json.get(
             "createdAt").isoformat()
+        conversation_obj = Conversation(**conversation_json)
+        conversation_obj.header = header
 
-        return jsonify(conversation_json), 200
+        conversation_doc_ref.update(conversation_obj.model_dump(include={
+            "header",
+        }))
+
+        return jsonify(_get_conversation_json_for_response(conversation_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error updating conversation header"}), 500
 
 
 @bp.delete("/customers/<customer_id>/conversations/<conversation_id>/delete")
@@ -394,23 +362,22 @@ def update_conversation_header(customer_id, conversation_id):
 @customer_permissions_required
 def delete_conversation(customer_id, conversation_id):
     try:
-        user = request.user
-        user_uid = user.get("uid")
         firestore_client: google.cloud.firestore.Client = firestore.client()
         conversation_doc_ref = firestore_client.collection(
             "conversations").document(conversation_id)
-        conversation_doc = conversation_doc_ref.get(
-            field_paths=["audioStoragePath"])
-        audio_storage_path = conversation_doc.get("audioStoragePath")
+        conversation_snap = conversation_doc_ref.get()
+        audio_storage_path = conversation_snap.get("audioStoragePath")
 
+        # Delete the audio file from storage
         delete_from_storage(audio_storage_path)
 
+        # Delete the conversation from firestore
         conversation_doc_ref.delete()
 
         return jsonify({}), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error deleting conversation"}), 500
 
 
 @bp.post("/customers/<customer_id>/ai/chat")
@@ -419,7 +386,6 @@ def delete_conversation(customer_id, conversation_id):
 def ai_chat(customer_id):
     try:
         user = request.user
-        user_uid = user.get("uid")
         request_data = request.get_json()
         # i.e.[{"role": "user", "content": "Hello, how are you?"}, {"role": "assistant", "content": "I'm good, thank you!"}]
         messages = request_data.get("messages")
@@ -432,7 +398,7 @@ def ai_chat(customer_id):
             query=messages[-2]["content"], limit=5, query_filter=models.Filter(
                 must=[
                     models.FieldCondition(
-                        key="userId", match=models.MatchValue(value=user_uid)),
+                        key="companyId", match=models.MatchValue(value=user.get("companyId"))),
                     models.FieldCondition(
                         key="customerId", match=models.MatchValue(value=customer_id))
                 ]
@@ -480,6 +446,12 @@ def _get_conversation_json_for_response(conversation_doc_ref: DocumentReference)
         conversation_json["id"] = conversation_doc_ref.id
         conversation_json["createdAt"] = conversation_json.get(
             "createdAt").isoformat()
+
+        # Remove these fields from the conversation json before returning the response.
+        # They are subject to change or be removed.
+        # TODO: Update transcribe to use API instead of Cloud Run service. These below fields may change or be removed then.
+        for field in ["transcriptRaw", "transcriptSegments", "speakerSegments", "language", "summaryRaw"]:
+            conversation_json.pop(field, None)
 
         conversation_json = Conversation(**conversation_json).model_dump()
         return conversation_json

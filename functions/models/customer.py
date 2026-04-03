@@ -18,7 +18,7 @@ class Customer(BaseModel):
     phone: str | None = None
     email: EmailStr | None = None
     address: Address | None = None
-    createdByUser: str
+    createdByUserId: str
     companyId: str
     status: CustomerStatus
     statusUpdatedAt: str  # isoformat string

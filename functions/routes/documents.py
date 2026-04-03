@@ -43,7 +43,6 @@ bp = Blueprint("documents", __name__)
 def create_document(customer_id):
     try:
         user = request.user
-        user_uid = user.get("uid")
         request_data = request.get_json()
         document_name = request_data.get("name")
         text = request_data.get("text")
@@ -55,7 +54,9 @@ def create_document(customer_id):
             "documents").document()
 
         document_json = Document(id=document_doc_ref.id, name=document_name, text=text, plainText=plain_text,
-                                 sourceTemplateId=source_template_id, customerId=customer_id, status=DocumentStatus.DRAFT, createdAt="PLACEHOLDER_FOR_SERVER_TIMESTAMP").model_dump(exclude={
+                                 sourceTemplateId=source_template_id, customerId=customer_id, status=DocumentStatus.DRAFT,
+                                 createdByUserId=user.get("uid"),
+                                 createdAt="PLACEHOLDER_FOR_SERVER_TIMESTAMP").model_dump(exclude={
                                      "id", "createdAt",
                                  })
         document_doc_ref.set({
@@ -66,7 +67,7 @@ def create_document(customer_id):
         # Create default user signer
         user_signer_ref = document_doc_ref.collection("signers").document()
         user_signer_json = Signer(id=user_signer_ref.id, name=user.get(
-            "name"), email=user.get("email"), color=4282145399, userId=user_uid, createdAt="PLACEHOLDER_FOR_SERVER_TIMESTAMP").model_dump(exclude={
+            "displayName"), email=user.get("email"), color=4282145399, userId=user.get("uid"), createdAt="PLACEHOLDER_FOR_SERVER_TIMESTAMP").model_dump(exclude={
                 "id", "createdAt",
             })
         user_signer_ref.set(
@@ -100,7 +101,7 @@ def create_document(customer_id):
             })
 
         create_document_audit_log(document_doc_ref, action=AuditLogAction.DOCUMENT_CREATED, actor_role=AuditLogActorRole.USER,
-                                  target_id=document_doc_ref.id, target_type=AuditLogTargetType.DOCUMENT, actor_id=user_uid, actor_email=user.get(
+                                  target_id=document_doc_ref.id, target_type=AuditLogTargetType.DOCUMENT, actor_id=user.get("uid"), actor_email=user.get(
                                       "email"),
                                   actor_name=user.get("displayName"), ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
@@ -119,12 +120,15 @@ def get_documents(customer_id):
         documents_snapshots = firestore_client.collection(
             "documents").where(filter=FieldFilter("customerId", "==", customer_id)).get()
 
-        documents_list = []
+        documents_objs = []
         for document_snap in documents_snapshots:
-            document_json = get_merged_document(document_snap.reference)
-            documents_list.append(document_json)
+            document_json = document_snap.to_dict()
+            document_json["id"] = document_snap.id
+            document_json["createdAt"] = document_json.get(
+                "createdAt").isoformat()
+            documents_objs.append(Document(**document_json))
 
-        return jsonify(documents_list), 200
+        return jsonify([document_obj.model_dump() for document_obj in documents_objs]), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": "Error retrieving documents"}, 500)

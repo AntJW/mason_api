@@ -15,13 +15,6 @@ from models.address import Address
 bp = Blueprint("customers", __name__)
 
 
-class CustomerStatus(Enum):
-    ACTIVE = "active"
-    PROSPECT = "prospect"
-    INACTIVE = "inactive"
-    UNDEFINED = "undefined"
-
-
 @bp.get("/customers/<customer_id>")
 @login_required
 @customer_permissions_required
@@ -89,7 +82,7 @@ def create_customer():
                 "postalCode": clean_string(request_data.get("postalCode")),
                 "country": clean_string(request_data.get("country")),
             },
-            "createdByUser": user.get("uid"),
+            "createdByUserId": user.get("uid"),
             "companyId": user.get("companyId"),
             "status": clean_string(request_data.get("status")).lower(),
             "statusUpdatedAt": "PLACEHOLDER_FOR_SERVER_TIMESTAMP",
@@ -117,37 +110,37 @@ def update_customer(customer_id):
         customer_doc_ref = request.customer_doc_ref
         request_data = request.get_json()
 
-        displayName = clean_string(request_data.get("displayName"))
-        firstName = clean_string(request_data.get("firstName"))
-        lastName = clean_string(request_data.get("lastName"))
-        email = clean_string(request_data.get("email"))
-        phone = clean_string(request_data.get("phone"))
+        customer_json = customer_doc_ref.get().to_dict()
+        customer_json["id"] = customer_doc_ref.id
+        customer_json["createdAt"] = customer_json.get(
+            "createdAt").isoformat()
+        customer_json["statusUpdatedAt"] = customer_json.get(
+            "statusUpdatedAt").isoformat()
+
+        # Update customer values
+        customer_json["displayName"] = clean_string(
+            request_data.get("displayName"))
+        customer_json["firstName"] = clean_string(
+            request_data.get("firstName"))
+        customer_json["lastName"] = clean_string(request_data.get("lastName"))
+        customer_json["email"] = clean_string(request_data.get("email"))
+        customer_json["phone"] = clean_string(request_data.get("phone"))
+
         address = request_data.get("address")
-        street = clean_string(address.get("street"))
-        street2 = clean_string(address.get("street2"))
-        city = clean_string(address.get("city"))
-        state = clean_string(address.get("state"))
-        postalCode = clean_string(address.get("postalCode"))
-        country = clean_string(address.get("country"))
+        customer_json["address"] = {
+            "street": clean_string(address.get("street")),
+            "street2": clean_string(address.get("street2")),
+            "city": clean_string(address.get("city")),
+            "state": clean_string(address.get("state")),
+            "postalCode": clean_string(address.get("postalCode")),
+            "country": clean_string(address.get("country")),
+        }
+        customer_obj = Customer(**customer_json)
+        customer_doc_ref.update(customer_obj.model_dump(include={
+            "displayName", "firstName", "lastName", "email", "phone", "address",
+        }))
+
         status = clean_string(request_data.get("status")).lower()
-
-        clean_address_json = Address(
-            street=street,
-            street2=street2,
-            city=city,
-            state=state,
-            postalCode=postalCode,
-            country=country
-        ).model_dump()
-
-        customer_doc_ref.update({
-            "displayName": displayName,
-            "firstName": firstName,
-            "lastName": lastName,
-            "email": email,
-            "phone": phone,
-            "address": clean_address_json,
-        })
 
         if status != customer_doc_ref.get().get("status"):
             customer_doc_ref.update({
