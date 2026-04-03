@@ -22,6 +22,7 @@ class Invitation(BaseModel):
     name: str
     email: EmailStr
     documentId: str
+    companyId: str
     token: str
     status: InvitationStatus
     sentAt: str  # isoformat string

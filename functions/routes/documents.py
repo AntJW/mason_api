@@ -7,8 +7,7 @@ import secrets
 import google.cloud.firestore
 from firebase_admin import firestore
 from flask import Blueprint, jsonify, request
-from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter, Query
-from google.cloud.firestore_v1.field_path import FieldPath
+from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter
 from qdrant_client import models
 from auth_decorator import (
     login_required, signing_token_required, customer_permissions_required)
@@ -100,7 +99,7 @@ def create_document(customer_id):
                 "createdAt": SERVER_TIMESTAMP
             })
 
-        create_document_audit_log(document_doc_ref, action=AuditLogAction.DOCUMENT_CREATED, actor_role=AuditLogActorRole.USER,
+        create_document_audit_log(document_doc_ref, company_id=user.get("companyId"), action=AuditLogAction.DOCUMENT_CREATED, actor_role=AuditLogActorRole.USER,
                                   target_id=document_doc_ref.id, target_type=AuditLogTargetType.DOCUMENT, actor_id=user.get("uid"), actor_email=user.get(
                                       "email"),
                                   actor_name=user.get("displayName"), ip_address=request.remote_addr, user_agent=request.user_agent.string)
@@ -184,7 +183,7 @@ def update_document(customer_id, document_id):
             "name", "text", "plainText",
         }))
 
-        create_document_audit_log(document_doc_ref, action=AuditLogAction.DOCUMENT_UPDATED.value, actor_role=AuditLogActorRole.USER.value,
+        create_document_audit_log(document_doc_ref, company_id=user.get("companyId"), action=AuditLogAction.DOCUMENT_UPDATED.value, actor_role=AuditLogActorRole.USER.value,
                                   target_id=document_doc_ref.id, target_type=AuditLogTargetType.DOCUMENT.value, actor_id=user.get("uid"), actor_email=user.get(
                                       "email"),
                                   actor_name=user.get("displayName"), ip_address=request.remote_addr, user_agent=request.user_agent.string)
@@ -434,7 +433,7 @@ def create_user_document_signature(customer_id, document_id):
                 "status": DocumentStatus.PREPARED.value
             })
 
-        create_document_audit_log(document_doc_ref, action=AuditLogAction.SIGNATURE_COMPLETED, actor_role=AuditLogActorRole.SIGNER, target_id=signature_doc_ref.id, target_type=AuditLogTargetType.SIGNATURE,
+        create_document_audit_log(document_doc_ref, company_id=user.get("companyId"), action=AuditLogAction.SIGNATURE_COMPLETED, actor_role=AuditLogActorRole.SIGNER, target_id=signature_doc_ref.id, target_type=AuditLogTargetType.SIGNATURE,
                                   actor_id=signer_id, actor_email=signer_snap.get("email"), actor_name=signer_snap.get("name"),
                                   ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
@@ -490,7 +489,7 @@ def send_signature_invitations(customer_id, document_id):
             invitation_doc_ref = document_doc_ref.collection(
                 "invitations").document()
             invitation_json = Invitation(id=invitation_doc_ref.id, signerId=signer_id, email=recipient_email,
-                                         name=recipient_name, documentId=document_id, token=token, status=InvitationStatus.SENT.value,
+                                         name=recipient_name, documentId=document_id, companyId=user.get("companyId"), token=token, status=InvitationStatus.SENT.value,
                                          sentAt="PLACEHOLDER_FOR_SERVER_TIMESTAMP", expiresAt="PLACEHOLDER_FOR_DATETIME", reminderCount=0).model_dump(exclude={
                                              "id", "sentAt", "expiresAt",
                                          })
@@ -501,7 +500,7 @@ def send_signature_invitations(customer_id, document_id):
                 "expiresAt": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30),
             })
 
-            create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_SENT, actor_role=AuditLogActorRole.USER, target_id=invitation_doc_ref.id, target_type=AuditLogTargetType.INVITATION,
+            create_document_audit_log(document_doc_ref, company_id=user.get("companyId"), action=AuditLogAction.INVITATION_SENT, actor_role=AuditLogActorRole.USER, target_id=invitation_doc_ref.id, target_type=AuditLogTargetType.INVITATION,
                                       actor_id=user_uid, actor_email=user.get("email"), actor_name=user.get("displayName"),
                                       ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
@@ -572,7 +571,7 @@ def cancel_signature_invitations(customer_id, document_id):
                     "canceledBy": user_uid
                 })
 
-                create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_CANCELED, actor_role=AuditLogActorRole.USER, target_id=invitation_doc_snapshot.id, target_type=AuditLogTargetType.INVITATION,
+                create_document_audit_log(document_doc_ref, company_id=user.get("companyId"), action=AuditLogAction.INVITATION_CANCELED, actor_role=AuditLogActorRole.USER, target_id=invitation_doc_snapshot.id, target_type=AuditLogTargetType.INVITATION,
                                           actor_id=user_uid, actor_email=user.get("email"), actor_name=user.get("displayName"),
                                           ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
@@ -642,7 +641,7 @@ def remove_user_document_signature(customer_id, document_id):
             "status": "draft"
         })
 
-        create_document_audit_log(document_doc_ref, action=AuditLogAction.SIGNATURE_REMOVED, actor_role=AuditLogActorRole.SIGNER, target_id=signature_ids_to_delete[0], target_type=AuditLogTargetType.SIGNATURE,
+        create_document_audit_log(document_doc_ref, company_id=user.get("companyId"), action=AuditLogAction.SIGNATURE_REMOVED, actor_role=AuditLogActorRole.SIGNER, target_id=signature_ids_to_delete[0], target_type=AuditLogTargetType.SIGNATURE,
                                   actor_id=signer.get("id"), actor_email=signer.get("email"), actor_name=signer.get("name"),
                                   ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
@@ -698,7 +697,7 @@ def send_signature_reminder(customer_id, document_id, signer_id):
                 "status": InvitationStatus.EXPIRED.value,
             })
 
-            create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_EXPIRED, actor_role=AuditLogActorRole.SYSTEM,
+            create_document_audit_log(document_doc_ref, company_id=user.get("companyId"), action=AuditLogAction.INVITATION_EXPIRED, actor_role=AuditLogActorRole.SYSTEM,
                                       target_id=existing_invitation_snap.id, target_type=AuditLogTargetType.INVITATION,
                                       actor_id=None, actor_email=None, actor_name=None,
                                       ip_address=None, user_agent=None)
@@ -712,7 +711,7 @@ def send_signature_reminder(customer_id, document_id, signer_id):
                 "invitations").document()
 
             invitation_json = Invitation(id=invitation_doc_ref.id, signerId=signer_id, email=signer_email,
-                                         name=signer_name, documentId=document_id, token=token, status=InvitationStatus.SENT.value,
+                                         name=signer_name, documentId=document_id, companyId=user.get("companyId"), token=token, status=InvitationStatus.SENT.value,
                                          sentAt="PLACEHOLDER_FOR_SERVER_TIMESTAMP", expiresAt="PLACEHOLDER_FOR_DATETIME", reminderCount=0).model_dump(exclude={
                                              "id", "sentAt", "expiresAt",
                                          })
@@ -722,7 +721,7 @@ def send_signature_reminder(customer_id, document_id, signer_id):
                 "expiresAt": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30),
             })
 
-            create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_SENT, actor_role=AuditLogActorRole.USER, target_id=invitation_doc_ref.id, target_type=AuditLogTargetType.INVITATION,
+            create_document_audit_log(document_doc_ref, company_id=user.get("companyId"), action=AuditLogAction.INVITATION_SENT, actor_role=AuditLogActorRole.USER, target_id=invitation_doc_ref.id, target_type=AuditLogTargetType.INVITATION,
                                       actor_id=user.get("uid"), actor_email=user.get("email"), actor_name=user.get("displayName"),
                                       ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
@@ -737,7 +736,7 @@ def send_signature_reminder(customer_id, document_id, signer_id):
                 "reminderCount": Increment(1),
             })
 
-            create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_RESENT, actor_role=AuditLogActorRole.USER, target_id=existing_invitation_snap.id, target_type=AuditLogTargetType.INVITATION,
+            create_document_audit_log(document_doc_ref, company_id=user.get("companyId"), action=AuditLogAction.INVITATION_RESENT, actor_role=AuditLogActorRole.USER, target_id=existing_invitation_snap.id, target_type=AuditLogTargetType.INVITATION,
                                       actor_id=user.get("uid"), actor_email=user.get("email"), actor_name=user.get("displayName"),
                                       ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
@@ -873,6 +872,7 @@ def get_signing_document(document_id, token):
         firestore_client = firestore.client()
 
         invitation_snap = invitation_doc_ref.get()
+        company_id = invitation_snap.get("companyId")
 
         last_viewed_at = invitation_snap.to_dict().get("lastViewedAt", None)
         # If invitation has not been opened and status is currently "sent", update invitation status to opened and set openedAt to current timestamp.
@@ -883,7 +883,7 @@ def get_signing_document(document_id, token):
                 "lastViewedAt": SERVER_TIMESTAMP,
             })
 
-            create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_OPENED, actor_role=AuditLogActorRole.SIGNER, target_id=invitation_snap.id, target_type=AuditLogTargetType.INVITATION,
+            create_document_audit_log(document_doc_ref, company_id=company_id, action=AuditLogAction.INVITATION_OPENED, actor_role=AuditLogActorRole.SIGNER, target_id=invitation_snap.id, target_type=AuditLogTargetType.INVITATION,
                                       actor_id=signer_id, actor_email=signer_email, actor_name=signer_name, ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         # If invitation has not been viewed in the last 60 minutes, create an audit log for invitation opened.
@@ -891,7 +891,7 @@ def get_signing_document(document_id, token):
             invitation_snap.reference.update({
                 "lastViewedAt": SERVER_TIMESTAMP,
             })
-            create_document_audit_log(document_doc_ref, action=AuditLogAction.INVITATION_OPENED, actor_role=AuditLogActorRole.SIGNER, target_id=invitation_snap.id, target_type=AuditLogTargetType.INVITATION,
+            create_document_audit_log(document_doc_ref, company_id=company_id, action=AuditLogAction.INVITATION_OPENED, actor_role=AuditLogActorRole.SIGNER, target_id=invitation_snap.id, target_type=AuditLogTargetType.INVITATION,
                                       actor_id=signer_id, actor_email=signer_email, actor_name=signer_name, ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         return jsonify(get_merged_signing_document(
@@ -911,6 +911,7 @@ def create_signer_document_signature(document_id, token):
         signer_name = request.signer_name
         signer_email = request.signer_email
         signature_image_file = request.files["file"]
+        company_id = invitation_doc_ref.get().get("companyId")
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
 
@@ -949,7 +950,7 @@ def create_signer_document_signature(document_id, token):
         })
 
         # Create audit log for signature completion
-        create_document_audit_log(document_doc_ref, AuditLogAction.SIGNATURE_COMPLETED, AuditLogActorRole.SIGNER, signature_doc_ref.id, AuditLogTargetType.SIGNATURE,
+        create_document_audit_log(document_doc_ref, company_id=company_id, action=AuditLogAction.SIGNATURE_COMPLETED, actor_role=AuditLogActorRole.SIGNER, target_id=signature_doc_ref.id, target_type=AuditLogTargetType.SIGNATURE,
                                   actor_id=signer_id, actor_email=signer_email, actor_name=signer_name, ip_address=request.remote_addr, user_agent=request.user_agent.string)
 
         all_signature_boxes = signature_box_coll_ref.get()
@@ -1016,8 +1017,8 @@ def decline_signature_invitation(document_id, token):
         invitation_id = invitation_snapshots[0].id
 
         # Update audit log to record the signature decline
-        create_document_audit_log(document_doc_ref, AuditLogAction.INVITATION_DECLINED, AuditLogActorRole.SIGNER, invitation_id, AuditLogTargetType.INVITATION,
-                                  actor_id=signer_id, actor_email=signer_email, actor_name=signer_name, ip_address=request.remote_addr, user_agent=request.user_agent.string)
+        create_document_audit_log(document_doc_ref, company_id=invitation_snapshots[0].get("companyId"), action=AuditLogAction.INVITATION_DECLINED, actor_role=AuditLogActorRole.SIGNER, target_id=invitation_id, target_type=AuditLogTargetType.INVITATION,
+                                  actor_id=signer_id, actor_email=signer_email, actor_name=signer_name, ip_address=request.remote_addr, user_agent=request.user_agent.string, metadata_reason=reason)
 
         return jsonify(get_merged_signing_document(firestore_client, document_id, signer_id)), 200
     except Exception as e:
@@ -1283,13 +1284,14 @@ def remove_all_document_signatures(document_doc_ref):
         raise Exception("Error removing all document signatures")
 
 
-def create_document_audit_log(document_doc_ref: DocumentReference, action: AuditLogAction, actor_role: AuditLogActorRole, target_id: str, target_type: AuditLogTargetType,
+def create_document_audit_log(document_doc_ref: DocumentReference, company_id: str, action: AuditLogAction, actor_role: AuditLogActorRole, target_id: str, target_type: AuditLogTargetType,
                               actor_id: str = None, actor_email: str = None, actor_name: str = None, ip_address: str = None,
                               user_agent: str = None, metadata_reason: str = None, metadata_method: str = None):
     try:
         audit_log_doc_ref = document_doc_ref.collection("auditLogs").document()
         audit_log_doc_ref.set({
             "documentId": document_doc_ref.id,
+            "companyId": company_id,
             "timestamp": SERVER_TIMESTAMP,
             "action": action,
             "actor": {
