@@ -7,5 +7,6 @@ class Template(BaseModel):
     name: str
     text: QuillDelta
     plainText: str
+    companyId: str
+    createdByUserId: str
     createdAt: str  # isoformat string
-    userId: str

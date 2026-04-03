@@ -333,3 +333,41 @@ def company_owner_required(f):
         return f(*args, **kwargs)
 
     return decorated_function
+
+
+def template_permissions_required(f):
+    """Require user to be member of the company that owns the template to access certain template endpoints.
+    Use only below ``@login_required`` so ``request.user`` is set.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        try:
+            template_id = kwargs.get("template_id")
+            if not template_id:
+                raise Exception("Missing template_id.")
+
+            firestore_client: google.cloud.firestore.Client = firestore.client()
+
+            template_doc_ref = firestore_client.collection("templates").document(
+                template_id
+            )
+            template_snap = template_doc_ref.get()
+
+            if not template_snap.exists:
+                raise Exception("Template not found.")
+
+            if template_snap.get("companyId") != request.user.get("companyId"):
+                raise Exception(
+                    "Unauthorized: user is not a member of the company that owns the template.")
+
+            if request.user.get("status") != UserStatus.ACTIVE.value:
+                raise Exception("User is not active.")
+
+            request.template_doc_ref = template_doc_ref
+        except Exception as e:
+            logger.error(f"template_permissions_required error: {e}")
+            return jsonify({"error": "Unauthorized: access denied."}), 403
+
+        return f(*args, **kwargs)
+
+    return decorated_function

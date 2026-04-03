@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from enum import Enum
 
 
@@ -18,7 +18,7 @@ class User(BaseModel):
     displayName: str
     firstName: str
     lastName: str
-    email: str
+    email: EmailStr
     companyId: str
     role: UserRole
     status: UserStatus

@@ -22,7 +22,6 @@ class Document(BaseModel):
     name: str
     text: QuillDelta
     plainText: str
-    createdAt: str  # isoformat string
     customerId: str
     signers: list[Signer] | None = None
     signatureBoxes: list[SignatureBox] | None = None
@@ -32,3 +31,5 @@ class Document(BaseModel):
     status: DocumentStatus
     invitations: list[Invitation] | None = None
     auditLogs: list[AuditLog] | None = None
+    createdByUserId: str
+    createdAt: str  # isoformat string

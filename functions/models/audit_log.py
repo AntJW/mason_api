@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from enum import Enum
 
 
@@ -43,7 +43,7 @@ class AuditLogActor(BaseModel):
     id: str | None = None
     role: AuditLogActorRole
     name: str | None = None
-    email: str | None = None
+    email: EmailStr | None = None
     ipAddress: str | None = None
     userAgent: str | None = None
 

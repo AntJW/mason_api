@@ -5,21 +5,21 @@ import re
 import google.cloud.firestore
 from firebase_admin import firestore
 from flask import Blueprint, jsonify, request
-from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter
-
-from auth_decorator import login_required
+from google.cloud.firestore import SERVER_TIMESTAMP, FieldFilter, DocumentReference
+from auth_decorator import login_required, company_permissions_required, template_permissions_required
 from clients.llm_client import LLMClient
 from logger import logger
+from models.template import Template
 
 bp = Blueprint("templates", __name__)
 
 
 @bp.post("/templates/create")
 @login_required
+@company_permissions_required
 def create_template():
     try:
         user = request.user
-        user_uid = user.get("uid")
         request_data = request.get_json()
         template_name = request_data.get("name")
         text = request_data.get("text")
@@ -28,26 +28,25 @@ def create_template():
         firestore_client: google.cloud.firestore.Client = firestore.client()
         template_doc_ref = firestore_client.collection(
             "templates").document()
-        template_id = template_doc_ref.id
 
-        template_json = {
-            "name": template_name,
-            "text": text,
-            "plainText": plain_text,
-            "createdAt": SERVER_TIMESTAMP,
-            "userId": user_uid
-        }
+        template_json = Template(
+            id=template_doc_ref.id,
+            name=template_name,
+            text=text,
+            plainText=plain_text,
+            createdByUserId=user.get("uid"),
+            companyId=user.get("companyId"),
+            createdAt="PLACEHOLDER_FOR_SERVER_TIMESTAMP",
+        ).model_dump(exclude={
+            "id", "createdAt",
+        })
 
-        template_doc_ref.set(template_json)
+        template_doc_ref.set({
+            **template_json,
+            "createdAt": SERVER_TIMESTAMP
+        })
 
-        template_doc = template_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "createdAt", "userId"])
-        template_json = template_doc.to_dict()
-        template_json["id"] = template_id
-        template_json["createdAt"] = template_doc.get(
-            "createdAt").isoformat()
-
-        return jsonify(template_json), 201
+        return jsonify(_get_template_json_for_response(template_doc_ref)), 201
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -55,26 +54,23 @@ def create_template():
 
 @bp.get("/templates")
 @login_required
+@company_permissions_required
 def get_templates():
     try:
         user = request.user
-        user_uid = user.get("uid")
         firestore_client: google.cloud.firestore.Client = firestore.client()
-        templates_docs = firestore_client.collection(
-            "templates").where(filter=FieldFilter("userId", "==", user_uid)).get()
+        templates_snapshots = firestore_client.collection(
+            "templates").where(filter=FieldFilter("companyId", "==", user.get("companyId"))).get()
 
-        templates_list = []
-        for template_doc in templates_docs:
-            template_json = template_doc.to_dict()
-            templates_list.append({
-                "id": template_doc.id,
-                "name": template_json.get("name"),
-                "text": template_json.get("text"),
-                "plainText": template_json.get("plainText"),
-                "createdAt": template_json.get("createdAt").isoformat(),
-                "userId": template_json.get("userId")
-            })
-        return jsonify(templates_list), 200
+        templates_objs = []
+        for template_snap in templates_snapshots:
+            template_json = template_snap.to_dict()
+            template_json["id"] = template_snap.id
+            template_json["createdAt"] = template_json.get(
+                "createdAt").isoformat()
+            templates_objs.append(Template(**template_json))
+
+        return jsonify([template_obj.model_dump() for template_obj in templates_objs]), 200
     except Exception as e:
         logger.error(f"error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -82,80 +78,65 @@ def get_templates():
 
 @bp.get("/templates/<template_id>")
 @login_required
+@template_permissions_required
 def get_template(template_id):
     try:
-        user = request.user
-        user_uid = user.get("uid")
-        firestore_client: google.cloud.firestore.Client = firestore.client()
-        template_doc_ref = firestore_client.collection(
-            "templates").document(template_id)
-        template_doc = template_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "createdAt", "userId"])
-        template_json = template_doc.to_dict()
-        template_json["id"] = template_id
-        template_json["createdAt"] = template_doc.get(
-            "createdAt").isoformat()
-        return jsonify(template_json), 200
+        return jsonify(_get_template_json_for_response(request.template_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error getting template"}), 500
 
 
 @bp.put("/templates/<template_id>/update")
 @login_required
+@template_permissions_required
 def update_template(template_id):
     try:
-        user = request.user
-        user_uid = user.get("uid")
+        template_doc_ref = request.template_doc_ref
         request_data = request.get_json()
         template_name = request_data.get("name")
         text = request_data.get("text")
         plain_text = request_data.get("plainText")
 
-        firestore_client: google.cloud.firestore.Client = firestore.client()
-        template_doc_ref = firestore_client.collection(
-            "templates").document(template_id)
-        template_doc_ref.update({
-            "name": template_name,
-            "text": text,
-            "plainText": plain_text,
-        })
-
-        template_doc = template_doc_ref.get(field_paths=[
-            "name", "text", "plainText", "createdAt", "userId"])
-        template_json = template_doc.to_dict()
-        template_json["id"] = template_id
-        template_json["createdAt"] = template_doc.get(
+        template_json = template_doc_ref.get().to_dict()
+        template_json["id"] = template_doc_ref.id
+        template_json["createdAt"] = template_json.get(
             "createdAt").isoformat()
-        return jsonify(template_json), 200
+
+        # Update template values
+        template_json["name"] = template_name
+        template_json["text"] = text
+        template_json["plainText"] = plain_text
+
+        template_obj = Template(**template_json)
+        template_doc_ref.update(template_obj.model_dump(include={
+            "name", "text", "plainText",
+        }))
+
+        return jsonify(_get_template_json_for_response(template_doc_ref)), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error updating template"}), 500
 
 
 @bp.delete("/templates/<template_id>/delete")
 @login_required
+@template_permissions_required
 def delete_template(template_id):
     try:
-        user = request.user
-        user_uid = user.get("uid")
-
-        firestore_client: google.cloud.firestore.Client = firestore.client()
-        template_doc_ref = firestore_client.collection(
-            "templates").document(template_id)
+        template_doc_ref = request.template_doc_ref
         template_doc_ref.delete()
         return jsonify({}), 200
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error deleting template"}), 500
 
 
 @bp.post("/templates/ai/generate")
 @login_required
+@company_permissions_required
 def ai_generate_template_text():
     try:
-        user = request.user
-        user_uid = user.get("uid")
         request_data = request.get_json()
         prompt = request_data.get("prompt")
         current_text = request_data.get("currentText")
@@ -202,4 +183,19 @@ def ai_generate_template_text():
 
     except Exception as e:
         logger.error(f"error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Error generating template text"}), 500
+
+
+# ------------------------------------------------------------------------------------------------
+# Templates helper functions below this line
+# ------------------------------------------------------------------------------------------------
+
+def _get_template_json_for_response(template_doc_ref: DocumentReference) -> dict | None:
+    try:
+        template_json = template_doc_ref.get().to_dict()
+        template_json["id"] = template_doc_ref.id
+        template_json["createdAt"] = template_json.get("createdAt").isoformat()
+        return Template(**template_json).model_dump()
+    except Exception as e:
+        logger.error(f"error: _get_template_json_for_response failed: {e}")
+        return None
