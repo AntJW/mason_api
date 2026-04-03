@@ -521,6 +521,8 @@ def cancel_signature_invitations(customer_id, document_id):
     try:
         user = request.user
         user_uid = user.get("uid")
+        request_data = request.get_json()
+        reason = request_data.get("reason", None)
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
         document_doc_ref = get_document_ref_for_customer(
@@ -568,12 +570,13 @@ def cancel_signature_invitations(customer_id, document_id):
                 invitation_doc_snapshot.reference.update({
                     "status": InvitationStatus.CANCELED.value,
                     "canceledAt": SERVER_TIMESTAMP,
-                    "canceledBy": user_uid
+                    "canceledBy": user_uid,
+                    "canceledReason": reason
                 })
 
                 create_document_audit_log(document_doc_ref, company_id=user.get("companyId"), action=AuditLogAction.INVITATION_CANCELED, actor_role=AuditLogActorRole.USER, target_id=invitation_doc_snapshot.id, target_type=AuditLogTargetType.INVITATION,
                                           actor_id=user_uid, actor_email=user.get("email"), actor_name=user.get("displayName"),
-                                          ip_address=request.remote_addr, user_agent=request.user_agent.string)
+                                          ip_address=request.remote_addr, user_agent=request.user_agent.string, metadata_reason=reason)
 
         return jsonify(get_merged_document(document_doc_ref)), 200
     except Exception as e:
@@ -984,7 +987,7 @@ def decline_signature_invitation(document_id, token):
         signer_name = request.signer_name
         signer_email = request.signer_email
         request_data = request.get_json()
-        reason = request_data.get("reason")
+        reason = request_data.get("reason", None)
 
         firestore_client: google.cloud.firestore.Client = firestore.client()
         document_doc_ref = firestore_client.collection(
