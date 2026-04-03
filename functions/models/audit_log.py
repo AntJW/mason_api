@@ -51,9 +51,9 @@ class AuditLogActor(BaseModel):
 class AuditLog(BaseModel):
     id: str
     documentId: str
+    companyId: str
     timestamp: str  # isoformat string
     action: AuditLogAction
     actor: AuditLogActor
     target: AuditLogTarget
     metadata: AuditLogMetadata | None = None
-    signerId: str | None = None
